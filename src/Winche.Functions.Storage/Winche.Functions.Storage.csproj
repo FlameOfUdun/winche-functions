@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>Winche.Functions.Storage</PackageId>
+    <RootNamespace>Winche.Functions.Storage</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Winche.Storage" Version="9.1.0" />
+    <ProjectReference Include="..\Winche.Functions\Winche.Functions.csproj" />
+  </ItemGroup>
+
+</Project>

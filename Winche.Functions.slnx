@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Winche.Functions/Winche.Functions.csproj" />
+    <Project Path="src/Winche.Functions.Database/Winche.Functions.Database.csproj" />
+    <Project Path="src/Winche.Functions.Storage/Winche.Functions.Storage.csproj" />
+    <Project Path="src/Winche.Functions.Auth/Winche.Functions.Auth.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Winche.Functions.Tests/Winche.Functions.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>Winche.Functions</PackageId>
+    <RootNamespace>Winche.Functions</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+    <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
+    <PackageReference Include="Cronos" Version="0.13.0" />
+    <PackageReference Include="Winche.Core" Version="1.0.0" />
+    <PackageReference Include="Winche.Core.AspNetCore" Version="1.0.0" />
+    <PackageReference Include="Winche.Webhooks" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Runtime\runtime.js" LogicalName="runtime.js" />
+    <EmbeddedResource Include="Runtime\functions.ts" LogicalName="functions.ts" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Winche.Functions.Tests" />
+    <InternalsVisibleTo Include="Winche.Functions.Database" />
+    <InternalsVisibleTo Include="Winche.Functions.Storage" />
+    <InternalsVisibleTo Include="Winche.Functions.Auth" />
+  </ItemGroup>
+
+</Project>

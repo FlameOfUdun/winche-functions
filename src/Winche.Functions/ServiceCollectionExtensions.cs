@@ -1,0 +1,37 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Winche.Webhooks;
+
+namespace Winche.Functions;
+
+public static class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// Adds JavaScript/TypeScript functions, run by Deno in sandboxed workers. Triggers on documents, files, users and
+    /// schedules go through Winche.Webhooks (AddWincheHooks and its adapters); <c>ctx.db</c>, <c>ctx.files</c>, <c>ctx.users</c>
+    /// come from Winche.Functions.Database/Storage/Auth. Map the app-facing API with <c>app.MapWincheFunctions()</c>.
+    /// </summary>
+    public static IServiceCollection AddWincheFunctions(this IServiceCollection services, Action<FunctionsOptions> configure)
+    {
+        var options = new FunctionsOptions();
+        configure(options);
+        if (string.IsNullOrWhiteSpace(options.ConnectionString)) throw new InvalidOperationException("Winche.Functions: set ConnectionString.");
+        services.AddSingleton(options);
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddNpgsqlDataSource(options.ConnectionString, serviceKey: FunctionStore.DataSourceKey);
+        services.AddSingleton<FunctionStore>();
+        services.AddSingleton<FunctionBundler>();
+        services.AddSingleton<DenoRuntime>();
+        services.AddSingleton<WincheFunctions>();
+        services.AddSingleton<BeforeFunctions>();
+        services.AddSingleton<IHookProvider, FunctionHooks>();
+        services.AddSingleton<IWincheAction, RunFunctionAction>();
+        services.AddSingleton(new WincheChangeSource("schedule", "Schedules", [], HasPaths: false, Variables: [], Internal: true));
+        // Background work starts once functions are set up (at once, unless the host sets products up on demand).
+        Winche.Core.WincheReadyServiceExtensions.AddWincheProductService<FunctionsSync>(services, Winche.Core.WincheProductNames.Functions);
+        services.AddSingleton<FunctionScheduler>();
+        Winche.Core.WincheReadyServiceExtensions.AddWincheProductService(services, Winche.Core.WincheProductNames.Functions, sp => sp.GetRequiredService<FunctionScheduler>());
+        services.AddSingleton<Winche.Core.IWincheProductSetup, FunctionsProductSetup>();
+        return services;
+    }
+}
