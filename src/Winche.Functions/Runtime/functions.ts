@@ -217,7 +217,7 @@ export const ref = {
   user: (uid: string) => ({ $userRef: uid }),
 };
 
-/** The kinds of error every Winche API and SDK shares (Firebase's): the `code` an app receives. */
+/** The kinds of error every Winche API and SDK shares: the `code` an app receives. */
 export type FunctionsErrorCode =
   | "cancelled" | "unknown" | "invalid-argument" | "deadline-exceeded" | "not-found" | "already-exists"
   | "permission-denied" | "resource-exhausted" | "failed-precondition" | "aborted" | "out-of-range"
