@@ -34,6 +34,15 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 | `Winche.Functions.Storage` | `ctx.files`: list, delete, deleteUnder. |
 | `Winche.Functions.Auth` | `ctx.users`: get, setClaims (Winche Auth). |
 
+## Install
+
+```sh
+dotnet add package Winche.Functions
+dotnet add package Winche.Functions.Database   # triggers and the admin API for each product the app has
+dotnet add package Winche.Functions.Storage
+dotnet add package Winche.Functions.Auth
+```
+
 ## Setup
 
 ```csharp
