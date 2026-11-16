@@ -30,24 +30,26 @@ public class ExpandTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, ref } from "@winche/functions";
+                import { callable, Link } from "@winche/functions";
                 export const visit = callable(async (_d, ctx) => {
-                  const v = await ctx.db.get("visits/v1", { expand: ["patient.doctor", "team"] });
-                  const plain = await ctx.db.get("visits/v1");
-                  const linked = await ctx.db.get("visits/v1", { expand: ["scan", "author"] });
-                  await ctx.db.set("notes/n1", { visit: ref.doc("visits/v1"), scan: ref.file("scans/a.png"), by: ref.user("u9") });
-                  const q = await ctx.db.query("visits", { where: [["ward", "==", "icu"]], expand: ["patient"] });
-                  const patient = v!.fields.patient as any;
+                  const visit = ctx.documents.doc("visits/v1");
+                  const v = await visit.expand(["patient.doctor", "team"]).get();
+                  const plain = await visit.get();
+                  const linked = await visit.expand(["scan", "author"]).get();
+                  await ctx.documents.doc("notes/n1").set({ visit, scan: ctx.files.child("scans/a.png"), by: Link.user("u9") });
+                  const q = await ctx.documents.collection("visits").where("ward", "==", "icu").expand(["patient"]).get();
+                  const patient = (v.get("patient") as Link).data() as any;
                   return {
-                    patient: patient.fields.name,
-                    doctor: patient.fields.doctor.fields.name,
-                    team: (v!.fields.team as any[]).map((t) => typeof t === "string" ? t : t.fields.name),
-                    plain: plain!.fields.patient,
-                    queried: (q[0].fields.patient as any).fields.name,
-                    queriedDoctor: (q[0].fields.patient as any).fields.doctor,
-                    scanSize: (linked!.fields.scan as any).sizeBytes,
-                    author: (linked!.fields.author as any).displayName,
-                    authorEmail: (linked!.fields.author as any).email,
+                    patient: patient.name,
+                    doctor: ((patient.doctor as Link).data() as any)?.name,
+                    team: (v.get("team") as Link[]).map((t) => (t.data() as any)?.name ?? t.target),
+                    plain: (plain.get("patient") as Link).target,
+                    plainData: (plain.get("patient") as Link).data(),
+                    queried: ((q.docs[0].get("patient") as Link).data() as any).name,
+                    queriedDoctor: (((q.docs[0].get("patient") as Link).data() as any).doctor as Link).target,
+                    scanSize: ((linked.get("scan") as Link).data() as any).sizeBytes,
+                    author: ((linked.get("author") as Link).data() as any).displayName,
+                    authorEmail: ((linked.get("author") as Link).data() as any).email,
                   };
                 });
                 """,
@@ -60,7 +62,8 @@ public class ExpandTests(PostgresFixture pg)
         Assert.Equal("Dr Who", (string?)data["doctor"]);
         Assert.Equal(["Dr Who", "doctors/gone"], data["team"]!.AsArray().Select(t => (string?)t));   // a missing document stays a path
         Assert.Equal("patients/p1", (string?)data["plain"]);
-        var note = await app.Service<DocumentDatabase>().GetAsync("notes/n1");   // ref.* store typed references
+        Assert.Null(data["plainData"]);   // not expanded: no data
+        var note = await app.Service<DocumentDatabase>().GetAsync("notes/n1");   // references store typed
         Assert.Equal((new DocumentReferenceValue("visits/v1"), new FileReferenceValue("scans/a.png"), new UserReferenceValue("u9")),
             ((DocumentReferenceValue)note!.Fields["visit"], (FileReferenceValue)note.Fields["scan"], (UserReferenceValue)note.Fields["by"]));
         Assert.Equal("Ann", (string?)data["queried"]);

@@ -1,12 +1,13 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.Documents;
+using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Runtime.Expansion;
 using Winche.Values;
-using Winche.Database.Documents;
 
 namespace Winche.Functions.Database;
 
@@ -26,46 +27,15 @@ public static class DatabaseFunctionsExtensions
     }
 }
 
-/// <summary>
-/// A document as functions see it, with the references <c>expand</c> reached replaced by the documents they point to
-/// (each in the same shape, its own fields expanded along the rest of the path). One that doesn't exist stays a path.
-/// </summary>
-internal static class Expanded
+/// <summary>Documents in the database's wire format (typed values), as the WebSocket protocol sends them.</summary>
+internal static class Wire
 {
-    public static JsonObject? Of(Document? doc, ExpandRequest expand, Expansion expansion) => Of(doc, [.. expand.Paths], expansion);
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private static JsonObject? Of(Document? doc, List<ExpandPath> paths, Expansion expansion)
-    {
-        var plain = Plain.Of(doc);
-        if (plain is null || doc is null) return plain;
-        plain["fields"] = Fields(doc.Fields, paths, expansion);
-        return plain;
-    }
+    public static JsonNode? Of<T>(T? value) => value is null ? null : JsonSerializer.SerializeToNode(value, value.GetType());
 
-    private static JsonObject Fields(IReadOnlyDictionary<string, Value> fields, List<ExpandPath> paths, Expansion expansion)
-    {
-        var o = new JsonObject();
-        foreach (var (key, value) in fields)
-            o[key] = Node(value, [.. paths.Where(p => p.Segments.Length > 0 && p.Segments[0] == key).Select(p => new ExpandPath(p.Segments[1..]))], expansion);
-        return o;
-    }
-
-    private static JsonNode? Node(Value value, List<ExpandPath> paths, Expansion expansion)
-    {
-        if (paths.Count == 0) return PlainJson.Of(value);
-        var ends = paths.Any(p => p.Segments.Length == 0);
-        return value switch
-        {
-            // A file or user reference a path ends at: the file's record, the user's account.
-            FileReferenceValue f when ends && expansion.Resolved.TryGetValue($"file:{f.Path}", out var file) => file.DeepClone(),
-            UserReferenceValue u when ends && expansion.Resolved.TryGetValue($"user:{u.Uid}", out var user) => user.DeepClone(),
-            DocumentReferenceValue r when expansion.Included.TryGetValue(r.Path.Trim('/'), out var doc) =>
-                Of(doc, [.. paths.Where(p => p.Segments.Length > 0)], expansion),
-            ArrayValue a => new JsonArray([.. a.Values.Select(v => Node(v, paths, expansion))]),
-            MapValue m => Fields(m.Fields, paths, expansion),
-            _ => PlainJson.Of(value),
-        };
-    }
+    /// <summary>A document's fields as tagged values (for changes and before-functions, where only the fields are known).</summary>
+    public static JsonObject Fields(IReadOnlyDictionary<string, Value> fields) => ValueSerializer.WriteFields(fields);
 }
 
 /// <summary>documents.beforeWrite: the deployed functions refuse or change a document write.</summary>
@@ -78,21 +48,24 @@ internal sealed class FunctionsBeforeWrite(BeforeFunctions functions) : Winche.D
         return functions.RunAsync("documents", "write", write.Path, captures => new JsonObject
         {
             ["operation"] = write.Operation.ToString().ToLowerInvariant(), ["path"] = write.Path, ["params"] = captures,
-            ["before"] = Plain.Of(write.Before),
-            ["data"] = write.Fields is { } fields ? new JsonObject { ["fields"] = PlainJson.Fields(fields) } : null,
+            ["before"] = Wire.Of(write.Before),
+            ["data"] = write.Fields is { } fields ? new JsonObject { ["fields"] = Wire.Fields(fields) } : null,
             ["auth"] = BeforeFunctions.Auth(caller),
         }, caller, result =>
         {
             if (result is not JsonObject changes) return;
             if (changes["set"] is JsonObject set)
-                foreach (var (field, value) in set) write.Set(field, DatabaseBinding.ToValue(value));
+                foreach (var (field, value) in set) if (value is not null) write.Set(field, ValueSerializer.Read(value));
             if (changes["remove"] is JsonArray remove)
                 foreach (var field in remove) if (field?.GetValue<string>() is { Length: > 0 } f) write.Remove(f);
         }, ct);
     }
 }
 
-/// <summary>ctx.db: get, set, update, delete, query — documents as plain JSON both ways.</summary>
+/// <summary>
+/// ctx.documents: reads, queries, counts, aggregations, writes and adds in the database's wire format (the same messages
+/// the WebSocket protocol takes), with the server's rights. The SDK builds them as the Dart SDK does.
+/// </summary>
 internal sealed class DatabaseBinding : IFunctionBinding
 {
     public string Name => "db";
@@ -104,56 +77,58 @@ internal sealed class DatabaseBinding : IFunctionBinding
         {
             switch (op)
             {
-                case "batch":
-                {
-                    // Several writes, all or none, each with an optional precondition (unchanged since read, must not exist).
-                    var items = args["writes"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give writes.");
-                    if (items.Count is 0 or > 500) throw new FunctionCallException("invalid-argument", "A batch has 1 to 500 writes.");
-                    await db.WriteAsync([.. items.Select(BatchWrite)], ct);
-                    return null;
-                }
                 case "get":
                 {
                     var doc = await db.GetAsync(Path(args), ct);
-                    var expand = Expand(args, services);
-                    if (expand is null) return Plain.Of(doc);
-                    var expansion = await ReferenceExpander.ExpandAsync(db, [doc], expand, ct, Resolution(services, db));
-                    return Expanded.Of(doc, expand, expansion);
+                    return await WithIncluded(new JsonObject { ["document"] = Wire.Of(doc) }, [doc], args, services, db, ct);
                 }
-                case "set":
-                    await db.WriteAsync([new SetWrite { Path = Path(args), Fields = Fields(args["data"]), Merge = args["merge"]?.GetValue<bool>() == true }], ct);
-                    return null;
-                case "update":
-                    await db.WriteAsync([new UpdateWrite
-                    {
-                        Path = Path(args), Fields = Fields(args["data"]).ToDictionary(kv => FieldPath.Parse(kv.Key), kv => kv.Value),
-                        Precondition = new Precondition(Exists: true),
-                    }], ct);
-                    return null;
-                case "delete":
-                    if (args["recursive"]?.GetValue<bool>() == true) return await db.DeleteSubtreeAsync(Path(args), ct: ct);
-                    var existed = await db.GetAsync(Path(args), ct) is not null;
-                    await db.WriteAsync([new DeleteWrite { Path = Path(args) }], ct);
-                    return existed ? 1 : 0;
+                case "getAll":
+                {
+                    var paths = (args["paths"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give paths."))
+                        .Select(p => p?.GetValue<string>()?.Trim('/') ?? "").ToList();
+                    var docs = await db.GetAllAsync(paths, ct);
+                    return await WithIncluded(new JsonObject { ["documents"] = new JsonArray([.. docs.Select(Wire.Of)]) }, docs, args, services, db, ct);
+                }
                 case "query":
                 {
-                    var query = Query(args);
-                    if (args["startAfter"]?.GetValue<string>() is { Length: > 0 } after)
-                    {
-                        // The next page: after that document, in the query's order.
-                        var last = await db.GetAsync(after.Trim('/'), ct) ?? throw new FunctionCallException("not-found", $"startAfter: there's no document {after}.");
-                        query = query with { Start = Cursor.FromDocument(last, query.OrderBy, before: false) };
-                    }
-                    var result = await db.QueryAsync(query, ct);
-                    var expand = Expand(args, services);
-                    if (expand is null) return new JsonArray([.. result.Documents.Select(d => (JsonNode?)Plain.Of(d))]);
-                    var expansion = await ReferenceExpander.ExpandAsync(db, result.Documents, expand, ct, Resolution(services, db));
-                    return new JsonArray([.. result.Documents.Select(d => (JsonNode?)Expanded.Of(d, expand, expansion))]);
+                    var result = await db.QueryAsync(Query(args), ct);
+                    return await WithIncluded(Wire.Of(result)!.AsObject(), result.Documents, args, services, db, ct);
                 }
+                case "count":
+                    return new JsonObject { ["count"] = await db.CountAsync(Query(args) with { Limit = null, Offset = null }, ct) };
+                case "aggregate":
+                {
+                    var aggregations = (args["aggregations"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give aggregations."))
+                        .Select(Aggregation).ToList();
+                    var result = await db.AggregateAsync(Query(args) with { Limit = null }, aggregations, ct);
+                    var values = new JsonObject();
+                    foreach (var (alias, value) in result.Values) values[alias] = ValueSerializer.Write(value);
+                    return new JsonObject { ["result"] = values };
+                }
+                case "write":
+                {
+                    var items = args["writes"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give writes.");
+                    if (items.Count is 0 or > 500) throw new FunctionCallException("invalid-argument", "A batch has 1 to 500 writes.");
+                    var writes = items.Select(w => w.Deserialize<Write>() ?? throw new FunctionCallException("invalid-argument", "A write is null.")).ToList();
+                    var results = await db.WriteAsync(writes, ct);
+                    return new JsonObject { ["writeResults"] = new JsonArray([.. results.Select(r => Wire.Of(r))]) };
+                }
+                case "add":
+                {
+                    var collection = args["collection"]?.GetValue<string>()?.Trim('/') is { Length: > 0 } c ? c : throw new FunctionCallException("invalid-argument", "Give a collection.");
+                    var fields = args["fields"] as JsonObject ?? throw new FunctionCallException("invalid-argument", "Give the fields.");
+                    return new JsonObject { ["document"] = Wire.Of(await db.AddAsync(collection, ValueSerializer.ReadFields(fields), ct)) };
+                }
+                case "deleteTree":
+                    // Everything under a path, in batches (no single unbounded transaction).
+                    return await db.DeleteSubtreeAsync(Path(args), ct: ct);
                 default:
-                    throw new FunctionCallException("invalid-argument", $"ctx.db.{op} isn't a thing.");
+                    throw new FunctionCallException("invalid-argument", $"ctx.documents: '{op}' isn't an operation.");
             }
         }
+        catch (QueryParseException ex) { throw new FunctionCallException("invalid-argument", $"{ex.Message} ({ex.JsonPath})."); }
+        catch (JsonException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
+        catch (WireFormatException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
         catch (RuntimeException ex)
         {
             throw new FunctionCallException(ex.Status switch
@@ -164,9 +139,37 @@ internal sealed class DatabaseBinding : IFunctionBinding
         }
     }
 
-    /// <summary>File and user references, resolved with the server's rights.</summary>
-    private static ReferenceResolution? Resolution(IServiceProvider services, DocumentDatabase db) =>
-        services.GetService<ReferenceResolvers>()?.For(db);
+    private static Query Query(JsonObject args) =>
+        QueryParser.Parse(args["query"] as JsonObject ?? throw new FunctionCallException("invalid-argument", "Give a query."));
+
+    private static Aggregation Aggregation(JsonNode? node)
+    {
+        var o = node as JsonObject ?? throw new FunctionCallException("invalid-argument", "Each aggregation is { kind, alias, field? }.");
+        var alias = o["alias"]?.GetValue<string>() is { Length: > 0 } a ? a : throw new FunctionCallException("invalid-argument", "Each aggregation has an alias.");
+        string Field() => o["field"]?.GetValue<string>() is { Length: > 0 } f ? f : throw new FunctionCallException("invalid-argument", $"{alias}: give the field.");
+        return o["kind"]?.GetValue<string>() switch
+        {
+            "count" => Winche.Database.Querying.Aggregation.Count(alias),
+            "sum" => Winche.Database.Querying.Aggregation.Sum(Field(), alias),
+            "average" => Winche.Database.Querying.Aggregation.Average(Field(), alias),
+            var k => throw new FunctionCallException("invalid-argument", $"'{k}' isn't an aggregation (count, sum, average)."),
+        };
+    }
+
+    /// <summary>Adds included (the referenced documents, by path) and resolved (files, users) when expand was asked for.</summary>
+    private static async Task<JsonObject> WithIncluded(JsonObject body, IEnumerable<Document?> docs, JsonObject args, IServiceProvider services,
+        DocumentDatabase db, CancellationToken ct)
+    {
+        if (Expand(args, services) is not { } expand) return body;
+        var expansion = await ReferenceExpander.ExpandAsync(db, docs, expand, ct, services.GetService<ReferenceResolvers>()?.For(db));
+        var included = new JsonObject();
+        foreach (var (path, doc) in expansion.Included) included[path] = Wire.Of(doc);
+        body["included"] = included;
+        var resolved = new JsonObject();
+        foreach (var (key, value) in expansion.Resolved) resolved[key] = value.DeepClone();
+        body["resolved"] = resolved;
+        return body;
+    }
 
     /// <summary>The <c>expand</c> option: reference fields to follow (server rights: every referenced document that exists).</summary>
     private static ExpandRequest? Expand(JsonObject args, IServiceProvider services) => args["expand"] switch
@@ -179,75 +182,4 @@ internal sealed class DatabaseBinding : IFunctionBinding
 
     private static string Path(JsonObject args) =>
         args["path"]?.GetValue<string>()?.Trim('/') is { Length: > 0 } p ? p : throw new FunctionCallException("invalid-argument", "Give a document path, e.g. \"patients/p1\".");
-
-    private static IReadOnlyDictionary<string, Value> Fields(JsonNode? data) =>
-        data is JsonObject o ? o.ToDictionary(kv => kv.Key, kv => ToValue(kv.Value)) : throw new FunctionCallException("invalid-argument", "Give the fields as an object.");
-
-    /// <summary>
-    /// Plain JSON to a value: whole numbers stay integers, { $timestamp } is a timestamp, { $documentReference }, { $fileReference } and
-    /// { $userReference } are references (ref.doc(), ref.file(), ref.user() in functions).
-    /// </summary>
-    internal static Value ToValue(JsonNode? node) => node switch
-    {
-        null => new NullValue(),
-        JsonObject o when o.Count == 1 && o["$timestamp"] is JsonValue ts && DateTimeOffset.TryParse(ts.GetValue<string>(), out var at) => new TimestampValue(at),
-        JsonObject o when o.Count == 1 && o["$documentReference"] is JsonValue d => new DocumentReferenceValue(d.GetValue<string>().Trim('/')),
-        JsonObject o when o.Count == 1 && o["$fileReference"] is JsonValue f => new FileReferenceValue(f.GetValue<string>().TrimStart('/')),
-        JsonObject o when o.Count == 1 && o["$userReference"] is JsonValue u => new UserReferenceValue(u.GetValue<string>()),
-        JsonObject o => new MapValue(o.ToDictionary(kv => kv.Key, kv => ToValue(kv.Value))),
-        JsonArray a => new ArrayValue([.. a.Select(ToValue)]),
-        JsonValue v when v.TryGetValue<bool>(out var b) => new BooleanValue(b),
-        JsonValue v when v.TryGetValue<long>(out var l) => new IntegerValue(l),
-        JsonValue v when v.TryGetValue<double>(out var d) => d == Math.Floor(d) && Math.Abs(d) < 9e15 ? new IntegerValue((long)d) : new DoubleValue(d),
-        JsonValue v => new StringValue(v.ToString()),
-        _ => new NullValue(),
-    };
-
-    /// <summary>One write of a batch: { set | update | delete: path, data?, merge?, precondition?: { exists?, updateTime? } }.</summary>
-    private static Write BatchWrite(JsonNode? node)
-    {
-        if (node is not JsonObject w) throw new FunctionCallException("invalid-argument", "Each write is { set | update | delete: path, … }.");
-        string P(string key) => w[key]!.GetValue<string>().Trim('/') is { Length: > 0 } p ? p : throw new FunctionCallException("invalid-argument", $"Give the {key} path.");
-        Precondition? pre = null;
-        if (w["precondition"] is JsonObject c)
-        {
-            DateTimeOffset? at = null;
-            if (c["updateTime"]?.GetValue<string>() is { } t)
-                at = DateTimeOffset.TryParse(t, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
-                    ? parsed : throw new FunctionCallException("invalid-argument", $"precondition.updateTime '{t}' isn't a time.");
-            pre = new Precondition(c["exists"]?.GetValue<bool>(), at);
-        }
-        if (w.ContainsKey("set")) return new SetWrite { Path = P("set"), Fields = Fields(w["data"]), Merge = w["merge"]?.GetValue<bool>() == true, Precondition = pre };
-        if (w.ContainsKey("update"))
-            return new UpdateWrite
-            {
-                Path = P("update"), Fields = Fields(w["data"]).ToDictionary(kv => FieldPath.Parse(kv.Key), kv => kv.Value),
-                Precondition = pre ?? new Precondition(Exists: true),
-            };
-        if (w.ContainsKey("delete")) return new DeleteWrite { Path = P("delete"), Precondition = pre };
-        throw new FunctionCallException("invalid-argument", "Each write is { set | update | delete: path, … }.");
-    }
-
-    private static Query Query(JsonObject args)
-    {
-        var collection = args["collection"]?.GetValue<string>()?.Trim('/') is { Length: > 0 } c ? c : throw new FunctionCallException("invalid-argument", "Give a collection.");
-        var filters = new List<Filter>();
-        foreach (var w in args["where"] as JsonArray ?? [])
-        {
-            if (w is not JsonArray { Count: 3 } clause) throw new FunctionCallException("invalid-argument", "Each where is [field, op, value].");
-            var op = clause[1]!.GetValue<string>() switch
-            {
-                "==" => FilterOperator.Eq, "!=" => FilterOperator.Ne, "<" => FilterOperator.Lt, "<=" => FilterOperator.Lte, ">" => FilterOperator.Gt,
-                ">=" => FilterOperator.Gte, "array-contains" => FilterOperator.ArrayContains, "in" => FilterOperator.In,
-                var x => throw new FunctionCallException("invalid-argument", $"'{x}' isn't an operator (==, !=, <, <=, >, >=, array-contains, in)."),
-            };
-            filters.Add(new FieldFilter(FieldPath.Parse(clause[0]!.GetValue<string>()), op, ToValue(clause[2])));
-        }
-        var orderBy = (args["orderBy"] as JsonArray ?? []).Select(o => o is JsonArray { Count: > 0 } pair
-            ? new Ordering(FieldPath.Parse(pair[0]!.GetValue<string>()), pair.Count > 1 && pair[1]?.GetValue<string>() == "desc" ? SortDirection.Desc : SortDirection.Asc)
-            : throw new FunctionCallException("invalid-argument", "Each orderBy is [field, \"asc\" | \"desc\"].")).ToList();
-        var limit = args["limit"]?.GetValue<int>() is { } l ? Math.Clamp(l, 1, 1000) : 100;
-        return new Query(collection, filters.Count switch { 0 => null, 1 => filters[0], _ => new CompositeFilter(CompositeOp.And, filters) },
-            orderBy.Count == 0 ? null : orderBy, limit);
-    }
 }

@@ -6,22 +6,22 @@ in your editor (VS Code, with `winche functions init`) and deployed with `winche
 console shows what's deployed, its versions (roll back) and runs callables.
 
 ```ts
-import { callable, documents, files, users, schedule, HttpsError } from "@winche/functions";
+import { callable, documents, files, users, schedule, FieldValue, HttpsError } from "@winche/functions";
 
 // Called by apps: the SDKs' functions.call("hello", { name: "ann" })
 export const hello = callable(async (data: { name: string }, ctx) => {
-  if (!ctx.auth) throw new HttpsError("unauthenticated", "Sign in first.");
-  const person = await ctx.db.get(`people/${data.name}`);
-  return { greeting: `Hello ${person?.fields.first ?? data.name}` };
+  if (!ctx.caller) throw new HttpsError("unauthenticated", "Sign in first.");
+  const person = await ctx.documents.doc(`people/${data.name}`).get();
+  return { greeting: `Hello ${person.get("first") ?? data.name}` };
 });
 
 // When a document is created: {name} parts of the path are in e.params
 export const onVisit = documents.onCreated("patients/{patientId}/visits/{visitId}", async (e, ctx) => {
-  await ctx.db.update(`patients/${e.params.patientId}`, { lastVisit: new Date() });
+  await ctx.documents.doc(`patients/${e.params.patientId}`).update({ lastVisit: e.data.get("at"), visits: FieldValue.increment(1) });
 });
 
-export const onScan = files.onUploaded("scans/{rest=**}", async (e, ctx) => ctx.log("New scan", e.path));
-export const welcome = users.onCreated(async (e, ctx) => ctx.users.setClaims(e.uid, { role: "patient" }));
+export const onScan = files.onUploaded("scans/{rest=**}", async (e, ctx) => ctx.log("New scan", e.path, e.file.data?.sizeBytes));
+export const welcome = users.onCreated(async (e) => e.user.reference.setCustomClaims({ role: "patient" }));
 export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
   await fetch("https://example.com/nightly-report", { method: "POST" });
 }, { timeZone: "Europe/London", timeoutSeconds: 300 });
@@ -30,9 +30,9 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 | Package | |
 | --- | --- |
 | `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`), console pages and actions. Deployed through the console (`winche functions deploy`, as you or a CI token). |
-| `Winche.Functions.Database` | `ctx.db`: get, set, update, delete (recursive too), query — with the server's rights; `get` and `query` take `expand`. |
-| `Winche.Functions.Storage` | `ctx.files`: list, get, read / readText, write, downloadUrl, delete, deleteUnder. |
-| `Winche.Functions.Auth` | `ctx.users`: get, setClaims (Winche Auth). |
+| `Winche.Functions.Database` | `ctx.documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database, with the server's rights. |
+| `Winche.Functions.Storage` | `ctx.files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
+| `Winche.Functions.Auth` | `ctx.auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
 
 ## Install
 
@@ -92,9 +92,9 @@ import { http, HttpsError } from "@winche/functions";
 // A link sent by email, valid for days: /functions/v1/http/download/<token>
 export const download = http.onRequest(async (req, ctx) => {
   const token = new URL(req.url).pathname.split("/").pop();
-  const link = await ctx.db.get(`downloadLinks/${token}`);
-  if (!link) throw new HttpsError("not-found", "This link has ended.");
-  return Response.redirect((await ctx.files.downloadUrl(String(link.fields.path))).url, 302);
+  const link = await ctx.documents.doc(`downloadLinks/${token}`).get();
+  if (!link.exists) throw new HttpsError("not-found", "This link has ended.");
+  return Response.redirect((await ctx.files.child(link.get("path")).downloadUrl()).url, 302);
 }, { methods: ["GET"] });
 
 // Another service's webhook, checked with its signing secret.
@@ -107,50 +107,94 @@ export const paymentEvents = http.onRequest(async (req, ctx) => {
 }, { methods: ["POST"], secrets: ["PAYMENTS_SECRET"] });
 ```
 
-- **Open to anyone:** there's no signed-in caller (`ctx.auth` is null). Check what you need yourself: a signature, a
+- **Open to anyone:** there's no signed-in caller (`ctx.caller` is null). Check what you need yourself: a signature, a
   token in the link, an API key from `ctx.secrets`.
 - `methods` limits them (others get 405); every method by default. `req.ip` is the caller's address.
 - Request bodies up to 1 MB (`FunctionsOptions.MaxHttpRequestBytes`); larger ones get 413. A thrown `HttpsError` is an
   error answer with its status and message, as for callables.
 - They can't be called as callables, and callables can't be reached here.
 
-## Files
+## Documents, files and users
 
-`ctx.files` reads and writes the project's files with the server's rights:
+`ctx.documents`, `ctx.files` and `ctx.auth` read like the Dart SDKs (winche_database, winche_storage): you get a
+**reference** from the service, `get()` returns a **snapshot**, and a snapshot's `reference` leads back. They act with
+the server's rights: access rules don't apply.
 
 ```ts
-export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
-  const pdf = await makePdf(await ctx.db.query("visits"));                       // a Uint8Array
-  await ctx.files.write("reports/weekly.pdf", pdf, { mimeType: "application/pdf", contentDisposition: 'attachment; filename="weekly.pdf"' });
-  const { url, expiresAt } = await ctx.files.downloadUrl("reports/weekly.pdf"); // a link to send on
+import { schedule, callable, FieldValue, Filter, Aggregate, Link } from "@winche/functions";
+
+export const tidy = schedule("0 3 * * *", async (_e, ctx) => {
+  const db = ctx.documents;
+  const visits = db.collection("visits");                               // or db.doc("patients/p1").collection("visits")
+  const old = await visits.where("at", "<", daysAgo(90)).orderBy("at").limit(500).get();
+  const batch = db.batch();
+  old.docs.forEach((d) => batch.delete(d.reference));
+  await batch.commit();                                                 // up to 500, all or none
+
+  const open = await visits.where(Filter.or(Filter.where("status", "==", "open"), Filter.where("urgent", "==", true))).count();
+  const { n, total } = await db.collection("orders").where("paid", "==", true).aggregate({ n: Aggregate.count(), total: Aggregate.sum("amount") });
+  const everyWard = await db.collectionGroup("beds").where("free", "==", true).get();   // every "beds" collection
+
+  await db.doc("stats/today").set({ open, n, total, at: FieldValue.serverTimestamp(), runs: FieldValue.increment(1) }, { merge: true });
+  await db.runTransaction(async (tx) => {                               // read, then write against what was read
+    const ward = await tx.get(db.doc("wards/w1"));
+    tx.update(db.doc("wards/w1"), { free: ward.get("free") - 1 });
+  });
 });
 ```
 
-- `read(path)` gives the bytes (`Uint8Array`), `readText(path)` UTF-8 text, `get(path)` the record (size, type,
-  metadata); each is null when there's no file. `write(path, data, { mimeType, metadata, contentDisposition,
-  cacheControl })` takes bytes or text, new or replacing a file, and returns its record.
-- Up to 32 MB per read or write. A write is an upload like any other: `files.onUploaded` triggers and webhooks run.
-- `downloadUrl(path)` lasts as long as the storage's links do (S3: its presigned link lifetime).
-- Before-functions can `get` and `read`, not `write` or make links.
-
-## Assets
-
-The functions folder's `assets/` folder is deployed with the code: fonts, translations, templates, images, HTML
-pages, any files. Functions read them with `ctx.assets`:
+- **Documents:** `doc(path)`, `collection(path)`, `collectionGroup(id)`, `getAll(refs)`, `batch()`, `runTransaction(fn)`.
+  A `DocumentReference` has `get()`, `set(data, { merge, mergeFields, precondition })`, `update(data)` (dotted paths),
+  `delete({ cascade })`, `collection()`, `expand(paths)`. A `CollectionReference` is a query, with `doc(id?)` and
+  `add(data)`. Queries chain `where(field, op, value)` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not-in`,
+  `array-contains`, `array-contains-any`, `array-contains-all`, `contains`, `starts-with`, `ends-with`, `matches`) or
+  `where(Filter.or(…))`, `orderBy`, `limit`, `limitToLast`, `offset`, `startAt` / `startAfter` / `endAt` /
+  `endBefore` (values or a snapshot), `select`, `expand`, then `get()`, `count()`, `sum()`, `average()`, `aggregate()`.
+- **Snapshots:** `DocumentSnapshot` has `exists`, `data()`, `get("a.b")`, `id`, `reference`, `createTime`, `updateTime`,
+  `updateTimeRaw` (for `precondition: { updateTime }`), `version`. `QuerySnapshot` has `docs`, `size`, `empty`, `hasMore`.
+- **Values:** numbers (whole ones are integers; `bigint` for large ones), strings, booleans, null, `Date` (timestamps),
+  `Uint8Array` (bytes), `GeoPoint`, `Link`, arrays and maps. `FieldValue.delete()`, `serverTimestamp()`,
+  `increment(n)`, `maximum(n)`, `minimum(n)`, `arrayUnion(…)`, `arrayRemove(…)` in `set` and `update`.
+- **Transactions** are optimistic: the documents a transaction read and then writes must be unchanged when it commits,
+  else it runs again (up to `maxAttempts`, default 5). Read before writing.
 
 ```ts
-const de = JSON.parse((await ctx.assets.readText("translations/de.json"))!);
-const font = await ctx.assets.read("fonts/Roboto-400.ttf");          // Uint8Array, or null when there's none
-const all = await ctx.assets.list("translations");                    // ["translations/de.json", …]
-if (ctx.assets.has("demos/intro.html")) return new Response(await ctx.assets.readText("demos/intro.html"), { headers: { "content-type": "text/html" } });
+export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
+  const report = ctx.files.child("reports").child("weekly.pdf");        // a ChildReference
+  await report.putData(await makePdf(), { mimeType: "application/pdf", contentDisposition: 'attachment; filename="weekly.pdf"' });
+  const { url, expiresAt } = await report.downloadUrl();                // a link to send on
+  const clip = await ctx.files.child("media/clip").putFromUrl(signedUrl, { headers: { authorization: `Bearer ${token}` } });
+  const folder = await ctx.files.child("reports").listChildren();       // files and folders
+});
 ```
 
-- Read-only, and part of the deployment: they change only when it does, and rolling back brings the old ones back.
-- `winche functions deploy` sends each file's SHA-256 first and uploads only contents the server doesn't have, so a
-  large font goes up once, not on every deploy. Contents are kept once, in the project's database, however many
-  versions use them. Up to 2000 assets, 64 MB each.
-- Files under `assets/` aren't code: import JSON your code needs from elsewhere in the folder.
-- In the emulators, saving a file under `assets/` deploys again, as code does.
+- **Files:** `child(path)` gives a `ChildReference` (`name`, `path`, `parent`, `child()`): `getSnapshot()`
+  (`exists`, `data`: size, type, metadata, version, …), `getData()` (bytes) / `getText()`, `putData(bytes | text,
+  { mimeType, metadata, contentDisposition, cacheControl })`, `putFromUrl(url, { headers, … })`, `list()` (one page)
+  / `listChildren()` (all), `updateMetadata(metadata, { cacheControl, ifVersion })`, `delete()` (a folder: all of
+  it), `downloadUrl()`.
+- `getData` and `putData` move up to 32 MB through the function; `putFromUrl` copies up to 5 GB on the server
+  (from a bucket's signed or authorized link), never through the function. A write is an upload like any other:
+  `files.onUploaded` triggers and webhooks run.
+
+```ts
+export const promote = callable(async (data: { uid: string }, ctx) => {
+  const user = ctx.auth.user(data.uid);                                  // a UserReference
+  await user.setCustomClaims({ ...(await user.getCustomClaims()), role: "admin" });
+  const snap = await user.get();                                         // a UserSnapshot
+  return { email: snap.data?.email, claims: snap.customClaims };
+});
+```
+
+- **Users:** `ctx.auth.user(uid)` gives a `UserReference`: `get()` (`exists`, `data`: email, name, providers,
+  claims, …), `getCustomClaims()`, `setCustomClaims(claims)` (in the user's next token).
+- **References in documents:** a reference written into a document (`db.doc(…)`, `files.child(…)`,
+  `auth.user(…)`, or `Link.document / file / user`) is stored typed and reads back as a `Link` (`kind`, `target`).
+  `expand(["patient", "patient.doctor", "scan", "author"])` on a get or query makes `link.data()` what it points to:
+  the document's fields, the file's record, the user's account. Paths walk maps, lists and references; 10 paths,
+  4 deep, the database's `ExpandLimit` (default 100) per call at most.
+- **Trigger events** carry the same snapshots: a document event's `data` and `before` (`exists` false when created or
+  deleted), a file event's `file`, a user event's `user`.
 
 ## Secrets
 
@@ -187,13 +231,13 @@ import { consolePage, consoleAction, HttpsError } from "@winche/functions";
 export const reports = consolePage({ title: "Reports", files: "console/reports", icon: "chart-bar", minRole: "viewer" });
 
 export const weeklyCounts = consoleAction(async (data: { weeks: number }, ctx) => {
-  const visits = await ctx.db.query("visits", { where: [["at", ">=", weeksAgo(data.weeks)]] });
-  return { visits: visits.length };
+  const visits = await ctx.documents.collection("visits").where("at", ">=", weeksAgo(data.weeks)).count();
+  return { visits };
 }, { minRole: "viewer" });
 
 export const closeWard = consoleAction(async (data: { ward: string }, ctx) => {
   if (!data.ward) throw new HttpsError("invalid-argument", "Which ward?");
-  await ctx.db.update(`wards/${data.ward}`, { closedBy: ctx.console!.user.email, closedAt: new Date() });
+  await ctx.documents.doc(`wards/${data.ward}`).update({ closedBy: ctx.console!.user.email, closedAt: new Date() });
 }, { minRole: "admin" });
 ```
 
@@ -241,8 +285,8 @@ document.querySelector("#close").onclick = async () => {
   defaults to `admin`.
 - **Roles are checked on the server** for every action (hiding a button is only for looks). An admin-only action asks
   for two-step sign-in where the console requires it for settings. Every run is logged with who ran it, and
-  `ctx.console.user` says who in the action. Actions run with the server's rights, like every function: `ctx.db`,
-  `ctx.files`, `ctx.users`, `ctx.secrets`.
+  `ctx.console.user` says who in the action. Actions run with the server's rights, like every function: `ctx.documents`,
+  `ctx.files`, `ctx.auth`, `ctx.secrets`.
 - **Apps can't call actions**, and pages can't call callables: `/functions/v1/call` only runs callables.
 - **Sandboxed:** the page runs in a frame with an origin of its own and no cookies of the console's, so it can't call
   the console's API or read its session. Its scripts, styles, images and fonts come from its own folder (or inline);
@@ -253,17 +297,6 @@ document.querySelector("#close").onclick = async () => {
   rolled back with the functions.
 - The emulators have no console: test a page's actions by calling them from your tests.
 
-## Following references
-
-Store references with `ref`: `ctx.db.set("visits/v1", { patient: ref.doc("patients/p1"), scan: ref.file("scans/a.png"),
-author: ref.user(ctx.auth!.uid) })` (read back, they are their paths and uids).
-
-`ctx.db.get(path, { expand: ["patient", "patient.doctor", "team", "scan", "author"] })` and
-`ctx.db.query(collection, { …, expand })` return the references at those paths as what they point to: a document
-(`DocumentData`, its own fields expanded along the rest of the path), a file's record, a user (`WincheUserInfo`).
-Paths walk maps, lists (each item) and document references; one that doesn't exist stays a path or uid. With the
-server's rights, like the rest of `ctx.db`: rules don't apply. 10 paths, 4 deep, and the database's `ExpandLimit` (default 100) per call at most.
-
 ## Before-functions
 
 They run **before** a write is saved, inside it, and can refuse it or change it:
@@ -272,8 +305,8 @@ They run **before** a write is saved, inside it, and can refuse it or change it:
 import { documents, files, users, HttpsError } from "@winche/functions";
 
 export const guardRecords = documents.beforeWrite("records/{id}", async (e, ctx) => {
-  if (e.before?.fields.signedOff) throw new HttpsError("permission-denied", "This record is signed off.");
-  if (e.operation !== "delete") return { set: { updatedBy: e.auth?.uid ?? "server" }, remove: ["draft"] };
+  if (e.before.get("signedOff")) throw new HttpsError("permission-denied", "This record is signed off.");
+  if (e.operation !== "delete") return { set: { updatedBy: e.caller?.uid ?? "server" }, remove: ["draft"] };
 });
 
 export const scans = files.beforeWrite("scans/{rest=**}", async (e) => ({ metadata: { checked: false }, cacheControl: "private" }));
@@ -293,7 +326,7 @@ export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.i
   `{ metadata: { key: value | null }, contentDisposition, cacheControl }`. A delete can only be refused. Several
   before-functions on one path run in export order, each seeing the previous one's changes.
 - **Quick, and reading only:** 5 seconds unless `timeoutSeconds` says otherwise (at most 30): the write, and its locks,
-  wait for it. `ctx.db`, `ctx.files` and `ctx.users` only read here; side effects belong in `onCreated`… triggers.
+  wait for it. `ctx.documents`, `ctx.files` and `ctx.auth` only read here; side effects belong in `onCreated`… triggers.
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.

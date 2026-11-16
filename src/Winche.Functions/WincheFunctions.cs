@@ -282,7 +282,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             var dot = op.IndexOf('.');
             var binding = bindings.FirstOrDefault(b => b.Name == op[..Math.Max(dot, 0)])
                 ?? throw new FunctionCallException("unavailable", $"ctx.{(dot > 0 ? op[..dot] : op)} isn't available in this app.");
-            if (readOnly && op is not ("db.get" or "db.query" or "files.list" or "files.get" or "files.read" or "users.get"))
+            if (readOnly && op is not ("db.get" or "db.getAll" or "db.query" or "db.count" or "db.aggregate" or "files.list" or "files.page" or "files.get" or "files.read" or "users.get"))
                 throw new FunctionCallException("failed-precondition", $"ctx.{op} can't change anything in a before-function.");
             await using var scope = services.CreateAsyncScope();
             return await binding.CallAsync(op[(dot + 1)..], args, scope.ServiceProvider, ct);

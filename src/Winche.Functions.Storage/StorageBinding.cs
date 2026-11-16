@@ -70,9 +70,19 @@ internal sealed class StorageBinding : IFunctionBinding
             return op switch
             {
                 "list" => JsonSerializer.SerializeToNode(await ListAllAsync(files, Arg("folder").Trim('/'), ct), Json),
+                // One page of a folder: files and subfolders in name order, and the token for the next page.
+                "page" => JsonSerializer.SerializeToNode(await files.ListAsync((Text("folder") ?? "").Trim('/'),
+                    new Winche.Storage.Models.FileListOptions(MaxResults: args["maxResults"]?.GetValue<int>(), PageToken: Text("pageToken"), MimeType: Text("mimeType")), ct), Json),
+                // Merges metadata (null removes a key), optionally changes the download headers ("" clears one), only at ifVersion if given.
+                "updateMetadata" => await files.UpdateMetadataAsync(Arg("path").TrimStart('/'), args["metadata"] as JsonObject ?? [],
+                    args["ifVersion"]?.GetValue<long>() is { } v ? new Winche.Storage.Models.FilePrecondition(Version: v) : null,
+                    new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct) is { } updated
+                    ? JsonSerializer.SerializeToNode(updated, Json) : throw new FunctionCallException("not-found", $"There's no file {Arg("path")}."),
                 "get" => await files.GetAsync(Arg("path").TrimStart('/'), ct) is { } record ? JsonSerializer.SerializeToNode(record, Json) : null,
                 "read" => await ReadAsync(files, Arg("path").TrimStart('/'), ct),
                 "write" => await WriteAsync(files, Arg("path").TrimStart('/'), args["base64"]?.GetValue<string>() ?? "", Text("mimeType"),
+                    args["metadata"] as JsonObject, new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct),
+                "copyFromUrl" => await CopyFromUrlAsync(files, Arg("path").TrimStart('/'), Arg("url"), args["headers"] as JsonObject, Text("mimeType"),
                     args["metadata"] as JsonObject, new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct),
                 "downloadUrl" => await files.GenerateDownloadUrlAsync(Arg("path").TrimStart('/'), ct) is var link
                     ? new JsonObject { ["url"] = link.Url, ["expiresAt"] = link.ExpiresAt } : null,
@@ -83,6 +93,7 @@ internal sealed class StorageBinding : IFunctionBinding
         }
         catch (Winche.Storage.Models.FileRecordNotFoundException) { throw new FunctionCallException("not-found", $"There's no file {Arg("path")}."); }
         catch (Winche.Storage.Models.InvalidUploadStatusException) { throw new FunctionCallException("failed-precondition", $"{Arg("path")} hasn't finished uploading."); }
+        catch (Winche.Storage.Models.StorageException ex) { throw new FunctionCallException(ex.Error.Code, ex.Message); }
         catch (NotSupportedException ex) { throw new FunctionCallException("unimplemented", ex.Message); }
         catch (ArgumentException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
     }
@@ -109,6 +120,56 @@ internal sealed class StorageBinding : IFunctionBinding
         var record = await files.WriteAsync(path, new MemoryStream(bytes), string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType,
             bytes.Length, metadata?.DeepClone() as JsonObject, headers, ct);
         return JsonSerializer.SerializeToNode(record, Json);
+    }
+
+    /// <summary>The most one copyFromUrl takes (it passes through the server's disk, not the function).</summary>
+    public const long MaxCopyBytes = 5L << 30;
+
+    private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
+
+    /// <summary>
+    /// Writes a file from a URL (GET, with the given headers), any size up to <see cref="MaxCopyBytes"/>: the bytes go
+    /// from the URL to storage through a temporary file on the server, never through the function.
+    /// </summary>
+    private static async Task<JsonNode?> CopyFromUrlAsync(FileStorage files, string path, string url, JsonObject? headers, string? mimeType,
+        JsonObject? metadata, Winche.Storage.Models.FileHeaders fileHeaders, CancellationToken ct)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
+            throw new FunctionCallException("invalid-argument", "url is an http(s) address.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        foreach (var (name, value) in headers ?? [])
+            if (value?.GetValueKind() == JsonValueKind.String) request.Headers.TryAddWithoutValidation(name, value.GetValue<string>());
+        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new FunctionCallException((int)response.StatusCode == 404 ? "not-found" : "unavailable",
+                $"{uri.Host} answered {(int)response.StatusCode} for {path}.");
+        if (response.Content.Headers.ContentLength > MaxCopyBytes)
+            throw new FunctionCallException("out-of-range", $"{path} is larger than {MaxCopyBytes >> 30} GB.");
+        var temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"winche-copy-{Guid.NewGuid():N}");
+        try
+        {
+            await using (var source = await response.Content.ReadAsStreamAsync(ct))
+            await using (var file = File.Create(temp))
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, ct)) > 0)
+                {
+                    total += read;
+                    if (total > MaxCopyBytes) throw new FunctionCallException("out-of-range", $"{path} is larger than {MaxCopyBytes >> 30} GB.");
+                    await file.WriteAsync(buffer.AsMemory(0, read), ct);
+                }
+            }
+            var type = !string.IsNullOrWhiteSpace(mimeType) ? mimeType : response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            await using var content = File.OpenRead(temp);
+            var record = await files.WriteAsync(path, content, type, content.Length, metadata?.DeepClone() as JsonObject, fileHeaders, ct);
+            return JsonSerializer.SerializeToNode(record, Json);
+        }
+        finally
+        {
+            try { File.Delete(temp); } catch (IOException) { }
+        }
     }
 
     /// <summary>Every file directly in <paramref name="folder"/>, across pages.</summary>

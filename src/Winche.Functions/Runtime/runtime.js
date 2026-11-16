@@ -29,29 +29,13 @@ const text = (args) => args.map((a) => {
   try { return JSON.stringify(a); } catch { return String(a); }
 }).join(" ");
 for (const level of ["log", "info", "warn", "error", "debug"]) console[level] = (...a) => postMessage({ t: "log", level, message: text(a) });
-// Dates become timestamps in documents; everything else is plain JSON.
-const encode = (v) => v instanceof Date ? { $timestamp: v.toISOString() }
-  : Array.isArray(v) ? v.map(encode)
-  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encode(x)]))
-  : v;
-// File contents cross to the server as base64.
+// Request and response bodies cross to the server as base64.
 const toBase64 = (bytes) => {
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 };
 const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-// In before-functions ctx.* only reads: a write there would run outside the write being checked.
-const readOnly = (what) => () => Promise.reject(Object.assign(
-  new Error(what + " can't change anything in a before-function: it would run outside the write being checked. Use an onCreated… trigger."),
-  { code: "failed-precondition" }));
-const context = (c) => c.readOnly ? lock(full(c)) : full(c);
-const lock = (ctx) => ({
-  ...ctx,
-  db: { ...ctx.db, set: readOnly("ctx.db.set"), update: readOnly("ctx.db.update"), delete: readOnly("ctx.db.delete"), batch: readOnly("ctx.db.batch") },
-  files: { ...ctx.files, write: readOnly("ctx.files.write"), downloadUrl: readOnly("ctx.files.downloadUrl"), delete: readOnly("ctx.files.delete"), deleteUnder: readOnly("ctx.files.deleteUnder") },
-  users: { ...ctx.users, setClaims: readOnly("ctx.users.setClaims") },
-});
 // Secrets the function declared (options.secrets), read from the console's encrypted store for this run.
 const secretsOf = (s, fn) => ({
   get: (name) => {
@@ -78,39 +62,16 @@ const assetsOf = (files) => ({
   },
   has: (path) => Object.hasOwn(files, assetPath(path)),
 });
-const full = (c) => ({
+// The run's raw context: the SDK (functions.ts, bundled with the code) builds ctx.documents, ctx.files and ctx.auth on it.
+const context = (c) => ({
+  call,
   functionName: c.functionName,
-  assets: assetsOf(c.assets ?? {}),
+  readOnly: !!c.readOnly,
   auth: c.auth ?? null,
-  secrets: secretsOf(c.secrets ?? {}, c.functionName),
   console: c.console ?? null,
+  secrets: secretsOf(c.secrets ?? {}, c.functionName),
+  assets: assetsOf(c.assets ?? {}),
   log: (...a) => console.log(...a),
-  db: {
-    get: (path, o) => call("db.get", { path, ...(o?.expand ? { expand: o.expand } : {}) }),
-    set: (path, data, o) => call("db.set", { path, data: encode(data), merge: !!o?.merge }),
-    update: (path, data) => call("db.update", { path, data: encode(data) }),
-    delete: (path, o) => call("db.delete", { path, recursive: !!o?.recursive }),
-    batch: (writes) => call("db.batch", { writes: writes.map((w) => (w.data ? { ...w, data: encode(w.data) } : w)) }),
-    query: (collection, q) => call("db.query", { collection, ...(q ?? {}), ...(q?.where ? { where: q.where.map(([f, op, v]) => [f, op, encode(v)]) } : {}) }),
-  },
-  files: {
-    list: (folder) => call("files.list", { folder }),
-    get: (path) => call("files.get", { path }),
-    read: async (path) => { const r = await call("files.read", { path }); return r === null ? null : fromBase64(r.base64); },
-    readText: async (path) => { const r = await call("files.read", { path }); return r === null ? null : new TextDecoder().decode(fromBase64(r.base64)); },
-    write: (path, data, o) => call("files.write", {
-      path, base64: toBase64(typeof data === "string" ? new TextEncoder().encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data)),
-      mimeType: o?.mimeType ?? (typeof data === "string" ? "text/plain; charset=utf-8" : null), metadata: o?.metadata ?? null,
-      contentDisposition: o?.contentDisposition ?? null, cacheControl: o?.cacheControl ?? null,
-    }),
-    downloadUrl: (path) => call("files.downloadUrl", { path }),
-    delete: (path) => call("files.delete", { path }),
-    deleteUnder: (folder) => call("files.deleteUnder", { folder }),
-  },
-  users: {
-    get: (uid) => call("users.get", { uid }),
-    setClaims: (uid, claims) => call("users.setClaims", { uid, claims }),
-  },
 });
 self.onmessage = async (m) => {
   const d = m.data;

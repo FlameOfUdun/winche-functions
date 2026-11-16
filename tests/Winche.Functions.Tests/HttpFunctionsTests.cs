@@ -18,16 +18,16 @@ public class HttpFunctionsTests(PostgresFixture pg)
           const expected = [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
           if (req.headers.get("x-signature") !== expected) return new Response("bad signature", { status: 401 });
           const event = JSON.parse(body);
-          await ctx.db.set(`events/${event.id}`, { type: event.type, user: event.userId });
+          await ctx.documents.doc(`events/${event.id}`).set({ type: event.type, user: event.userId });
           return { ok: true };
         }, { methods: ["POST"], secrets: ["HOOK_SECRET"] });
 
         // A link in an email: /functions/v1/http/report/<token> sends the browser on.
         export const report = http.onRequest(async (req, ctx) => {
           const token = new URL(req.url).pathname.split("/").pop();
-          const doc = await ctx.db.get(`links/${token}`);
-          if (!doc) throw new HttpsError("not-found", "This link has ended.");
-          return Response.redirect(String(doc.fields.to), 302);
+          const doc = await ctx.documents.doc(`links/${token}`).get();
+          if (!doc.exists) throw new HttpsError("not-found", "This link has ended.");
+          return Response.redirect(String(doc.get("to")), 302);
         }, { methods: ["GET"] });
 
         export const echo = http.onRequest(async (req) => new Response(new Uint8Array(await req.arrayBuffer()).reverse(),

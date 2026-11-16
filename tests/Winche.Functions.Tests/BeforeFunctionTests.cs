@@ -15,20 +15,20 @@ public class BeforeFunctionTests(PostgresFixture pg)
         import { documents, files, users, HttpsError } from "@winche/functions";
 
         export const guardRecords = documents.beforeWrite("records/{id}", async (e, ctx) => {
-          if (e.before?.fields.signedOff) throw new HttpsError("permission-denied", `Record ${e.params.id} is signed off.`);
+          if (e.before.get("signedOff")) throw new HttpsError("permission-denied", `Record ${e.params.id} is signed off.`);
           if (e.operation === "delete") return;
-          const ward = await ctx.db.get("settings/ward");          // reads work
-          return { set: { updatedBy: e.auth?.uid ?? "server", ward: ward?.fields.name ?? null, "meta.op": e.operation }, remove: ["draft"] };
+          const ward = await ctx.documents.doc("settings/ward").get();   // reads work
+          return { set: { updatedBy: e.caller?.uid ?? "server", ward: ward.get("name") ?? null, "meta.op": e.operation }, remove: ["draft"] };
         });
 
         export const sneaky = documents.beforeWrite("sneaky/{id}", async (_e, ctx) => {
-          await ctx.db.set("elsewhere/x", { a: 1 });              // writes don't: it fails, so the write is refused
+          await ctx.documents.doc("elsewhere/x").set({ a: 1 });   // writes don't: it fails, so the write is refused
         });
 
         export const lenient = documents.beforeWrite("lenient/{id}", async () => { throw new Error("bug"); }, { failOpen: true });
 
         export const scans = files.beforeWrite("scans/{rest=**}", async (e) => {
-          if (e.before?.metadata?.locked) throw new HttpsError("permission-denied", "Locked.");
+          if (e.before.data?.metadata?.locked) throw new HttpsError("permission-denied", "Locked.");
           if (e.operation === "delete") return;
           return { metadata: { checked: true, secret: null }, cacheControl: "private" };
         });
@@ -38,7 +38,7 @@ public class BeforeFunctionTests(PostgresFixture pg)
         });
 
         export const noNightOwls = users.beforeSignIn(async (e) => {
-          if (e.user.displayName === "Owl") throw new HttpsError("permission-denied", "Not now, Owl.");
+          if (e.user.data?.displayName === "Owl") throw new HttpsError("permission-denied", "Not now, Owl.");
         });
         """;
 
@@ -52,7 +52,7 @@ public class BeforeFunctionTests(PostgresFixture pg)
         var db = app.Service<DocumentDatabase>();
         await db.WriteAsync([new SetWrite { Path = "settings/ward", Fields = F(("name", "ICU")) }]);
 
-        // Changed: fields set and removed, with a read from ctx.db
+        // Changed: fields set and removed, with a read from ctx.documents
         await db.WriteAsync([new SetWrite { Path = "records/r1", Fields = F(("n", 1), ("draft", "x")) }]);
         var r1 = (await db.GetAsync("records/r1"))!.Fields;
         Assert.Equal(("server", "ICU", false), (((StringValue)r1["updatedBy"]).Value, ((StringValue)r1["ward"]).Value, r1.ContainsKey("draft")));
@@ -64,7 +64,7 @@ public class BeforeFunctionTests(PostgresFixture pg)
         Assert.Equal("Record r2 is signed off.", denied.Message);
         Assert.NotNull(await db.GetAsync("records/r2"));
 
-        // ctx.db can't write in a before-function: the function fails, so the write is refused (fail closed)…
+        // ctx.documents can't write in a before-function: the function fails, so the write is refused (fail closed)…
         var sneaky = await Assert.ThrowsAsync<WincheDeniedException>(() => db.WriteAsync([new SetWrite { Path = "sneaky/s", Fields = F(("a", 1)) }]));
         Assert.Contains("sneaky failed", sneaky.Message);
         Assert.Null(await db.GetAsync("elsewhere/x"));
