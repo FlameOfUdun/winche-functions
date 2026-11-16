@@ -13,12 +13,15 @@ public static class FunctionsEndpoints
 
     public sealed record CallRequest(JsonElement? Data);
 
-    /// <summary>The shared error for a failed run: a code from the shared list, else <c>internal</c> with the code as reason.</summary>
-    public static WincheError ErrorOf(FunctionResult result)
+    /// <summary>
+    /// The shared error for a failed run: a code from the shared list, else <c>internal</c> with the code as reason. Apps
+    /// see their own errors (HttpsError) and plain failures; with <paramref name="reason"/> (the console's own people), any
+    /// failure says why, as the logs do (secrets' values are hidden there already).
+    /// </summary>
+    public static WincheError ErrorOf(FunctionResult result, bool reason = false)
     {
         var code = result.ErrorCode ?? "internal";
-        // The app sees its own errors (HttpsError) and plain failures; details of internal ones stay in the logs.
-        var message = result.PublicError || code is "not-found" or "deadline-exceeded" or "unavailable" ? result.ErrorMessage ?? "" : "The function failed.";
+        var message = reason || result.PublicError || code is "not-found" or "deadline-exceeded" or "unavailable" ? result.ErrorMessage ?? "" : "The function failed.";
         var details = result.PublicError ? result.ErrorDetails : null;
         return WincheError.IsCode(code)
             ? new WincheError(WincheError.Parse(code), message, details: details is JsonObject o ? o : details is null ? null : new JsonObject { ["value"] = details })
