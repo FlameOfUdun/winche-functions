@@ -47,6 +47,20 @@ public static class Deno
     public static string? Path => Environment.GetEnvironmentVariable("WINCHE_DENO") is { Length: > 0 } p ? p : null;
 }
 
+/// <summary>References to <c>memory:&lt;name&gt;</c>, read from <see cref="Values"/> (with the app's credentials).</summary>
+public sealed class MemorySecretSource : Winche.Secrets.ISecretSource
+{
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Values = new();
+    public string Name => "memory";
+    public string Title => "Memory";
+    public string LocatorHint => "a name";
+    public string? Problem(string locator) => null;
+    public Task<bool> UsesAppCredentialsAsync(Winche.Secrets.SecretSourceContext context, CancellationToken ct) => Task.FromResult(true);
+    public Task<string> ReadAsync(Winche.Secrets.SecretReference reference, Winche.Secrets.SecretSourceContext context, CancellationToken ct) =>
+        Values.TryGetValue(reference.Locator, out var v) ? Task.FromResult(v)
+            : throw new Winche.Secrets.SecretReferenceException("not-found", $"Memory has nothing at {reference.Locator}.");
+}
+
 internal sealed class MemoryArchive : IArchive, Winche.Storage.Locations.IArchiveContent
 {
     public ConcurrentDictionary<string, byte[]> Bytes { get; } = new();
@@ -87,6 +101,7 @@ public sealed class FunctionsApp : IAsyncDisposable
         b.WebHost.UseUrls("http://127.0.0.1:0");
         b.Logging.ClearProviders();
         b.Services.AddWincheConfig(o => { o.ConnectionString = db; o.MasterKey = "functions-tests-master-key-0123456789abcdef"; });
+        Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecretSource<MemorySecretSource>(b.Services);
         b.Services.AddWincheHooks(o => { o.ConnectionString = db; o.PollInterval = TimeSpan.FromMilliseconds(50); o.RetryDelays = [TimeSpan.FromMilliseconds(200)]; });
         b.Services.AddWincheDatabase(o =>
         {

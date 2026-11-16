@@ -61,6 +61,20 @@ public class SecretsTests(PostgresFixture pg)
         Assert.Equal((true, "admin@x"), (set.IsSet, set.SetBy));
 
         // A saved secret no function declares any more still shows, so it can be removed.
+        // A reference: read when the function runs, hidden the same; one that can't be read fails the run with the reason.
+        MemorySecretSource.Values["ses"] = """{"key":"AKIA-from-elsewhere"}""";
+        await secrets.SetReferenceAsync("SES_KEY", SecretReference.Parse("memory:ses#key"), "admin@x", allowAppCredentials: true);
+        Assert.Equal("memory:ses#key", (await secrets.ListAsync(functions.Current)).Single(s => s.Name == "SES_KEY").Reference?.ToString());
+        var viaRef = await functions.InvokeAsync("send", null, FunctionCaller.Server);
+        Assert.True(viaRef.Ok, viaRef.ErrorMessage);
+        Assert.Equal("using •••• for the default region", viaRef.Logs.Single().Message);
+        Assert.True((await secrets.TestAsync("SES_KEY")).Ok);
+        await secrets.SetReferenceAsync("SES_KEY", SecretReference.Parse("memory:gone"), "admin@x", allowAppCredentials: true);
+        var gone = await functions.InvokeAsync("send", null, FunctionCaller.Server);
+        Assert.Equal(("failed-precondition", false), (gone.ErrorCode, gone.Ok));
+        Assert.Contains("Memory has nothing at gone", gone.ErrorMessage);
+        Assert.False((await secrets.TestAsync("SES_KEY")).Ok);
+
         await secrets.SetAsync("OLD_TOKEN", "old-value", null);
         Assert.Contains(await secrets.ListAsync(functions.Current), s => s is { Name: "OLD_TOKEN", IsSet: true, UsedBy.Count: 0 });
         Assert.True(await secrets.RemoveAsync("OLD_TOKEN"));

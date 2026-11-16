@@ -1,3 +1,4 @@
+using Winche.Secrets;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -292,7 +293,9 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         var fn = d?.Functions.FirstOrDefault(f => f.Name == name && (kind is null || f.Trigger.Kind == kind));
         if (d is null || fn is null) return FunctionResult.Failed("not-found", $"There's no function {name}.");
         var logs = new List<FunctionLogLine>();
-        var secretValues = fn.Secrets is { Count: > 0 } names ? await secrets.ForRunAsync(names, ct) : [];
+        Dictionary<string, string?> secretValues;
+        try { secretValues = fn.Secrets is { Count: > 0 } names ? await secrets.ForRunAsync(names, ct) : []; }
+        catch (SecretReferenceException unreadable) { return FunctionResult.Failed("failed-precondition", unreadable.Message); }   // e.g. AWS refused: the reason, never a value
         var hidden = secretValues.Values.OfType<string>().ToList();
         string Hide(string text) => hidden.Count == 0 ? text : FunctionSecrets.Hide(text, hidden);
         var bindings = services.GetServices<IFunctionBinding>().ToList();
