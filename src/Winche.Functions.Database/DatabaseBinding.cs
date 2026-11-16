@@ -57,9 +57,9 @@ internal static class Expanded
         return value switch
         {
             // A file or user reference a path ends at: the file's record, the user's account.
-            FileRefValue f when ends && expansion.Resolved.TryGetValue($"file:{f.Path}", out var file) => file.DeepClone(),
-            UserRefValue u when ends && expansion.Resolved.TryGetValue($"user:{u.Uid}", out var user) => user.DeepClone(),
-            ReferenceValue r when expansion.Included.TryGetValue(r.Path.Trim('/'), out var doc) =>
+            FileReferenceValue f when ends && expansion.Resolved.TryGetValue($"file:{f.Path}", out var file) => file.DeepClone(),
+            UserReferenceValue u when ends && expansion.Resolved.TryGetValue($"user:{u.Uid}", out var user) => user.DeepClone(),
+            DocumentReferenceValue r when expansion.Included.TryGetValue(r.Path.Trim('/'), out var doc) =>
                 Of(doc, [.. paths.Where(p => p.Segments.Length > 0)], expansion),
             ArrayValue a => new JsonArray([.. a.Values.Select(v => Node(v, paths, expansion))]),
             MapValue m => Fields(m.Fields, paths, expansion),
@@ -169,16 +169,16 @@ internal sealed class DatabaseBinding : IFunctionBinding
         data is JsonObject o ? o.ToDictionary(kv => kv.Key, kv => ToValue(kv.Value)) : throw new FunctionCallException("invalid-argument", "Give the fields as an object.");
 
     /// <summary>
-    /// Plain JSON to a value: whole numbers stay integers, { $timestamp } is a timestamp, { $docRef }, { $fileRef } and
-    /// { $userRef } are references (ref.doc(), ref.file(), ref.user() in functions).
+    /// Plain JSON to a value: whole numbers stay integers, { $timestamp } is a timestamp, { $documentReference }, { $fileReference } and
+    /// { $userReference } are references (ref.doc(), ref.file(), ref.user() in functions).
     /// </summary>
     internal static Value ToValue(JsonNode? node) => node switch
     {
         null => new NullValue(),
         JsonObject o when o.Count == 1 && o["$timestamp"] is JsonValue ts && DateTimeOffset.TryParse(ts.GetValue<string>(), out var at) => new TimestampValue(at),
-        JsonObject o when o.Count == 1 && o["$docRef"] is JsonValue d => new ReferenceValue(d.GetValue<string>().Trim('/')),
-        JsonObject o when o.Count == 1 && o["$fileRef"] is JsonValue f => new FileRefValue(f.GetValue<string>().TrimStart('/')),
-        JsonObject o when o.Count == 1 && o["$userRef"] is JsonValue u => new UserRefValue(u.GetValue<string>()),
+        JsonObject o when o.Count == 1 && o["$documentReference"] is JsonValue d => new DocumentReferenceValue(d.GetValue<string>().Trim('/')),
+        JsonObject o when o.Count == 1 && o["$fileReference"] is JsonValue f => new FileReferenceValue(f.GetValue<string>().TrimStart('/')),
+        JsonObject o when o.Count == 1 && o["$userReference"] is JsonValue u => new UserReferenceValue(u.GetValue<string>()),
         JsonObject o => new MapValue(o.ToDictionary(kv => kv.Key, kv => ToValue(kv.Value))),
         JsonArray a => new ArrayValue([.. a.Select(ToValue)]),
         JsonValue v when v.TryGetValue<bool>(out var b) => new BooleanValue(b),

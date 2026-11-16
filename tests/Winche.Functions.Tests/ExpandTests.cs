@@ -22,10 +22,10 @@ public class ExpandTests(PostgresFixture pg)
             uid = (await scope.ServiceProvider.GetRequiredService<Winche.Auth.IWincheAuth>().CreateUserAsync("ann@example.com", null, "Ann Lee")).Uid;
         await app.Service<DocumentDatabase>().WriteAsync([
             new SetWrite { Path = "doctors/d1", Fields = F(("name", new StringValue("Dr Who"))) },
-            new SetWrite { Path = "patients/p1", Fields = F(("name", new StringValue("Ann")), ("doctor", new ReferenceValue("doctors/d1"))) },
-            new SetWrite { Path = "visits/v1", Fields = F(("patient", new ReferenceValue("patients/p1")),
-                ("team", new ArrayValue([new ReferenceValue("doctors/d1"), new ReferenceValue("doctors/gone")])), ("ward", new StringValue("icu")),
-                ("scan", new FileRefValue("scans/a.png")), ("author", new UserRefValue(uid))) },
+            new SetWrite { Path = "patients/p1", Fields = F(("name", new StringValue("Ann")), ("doctor", new DocumentReferenceValue("doctors/d1"))) },
+            new SetWrite { Path = "visits/v1", Fields = F(("patient", new DocumentReferenceValue("patients/p1")),
+                ("team", new ArrayValue([new DocumentReferenceValue("doctors/d1"), new DocumentReferenceValue("doctors/gone")])), ("ward", new StringValue("icu")),
+                ("scan", new FileReferenceValue("scans/a.png")), ("author", new UserReferenceValue(uid))) },
         ]);
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
@@ -61,8 +61,8 @@ public class ExpandTests(PostgresFixture pg)
         Assert.Equal(["Dr Who", "doctors/gone"], data["team"]!.AsArray().Select(t => (string?)t));   // a missing document stays a path
         Assert.Equal("patients/p1", (string?)data["plain"]);
         var note = await app.Service<DocumentDatabase>().GetAsync("notes/n1");   // ref.* store typed references
-        Assert.Equal((new ReferenceValue("visits/v1"), new FileRefValue("scans/a.png"), new UserRefValue("u9")),
-            ((ReferenceValue)note!.Fields["visit"], (FileRefValue)note.Fields["scan"], (UserRefValue)note.Fields["by"]));
+        Assert.Equal((new DocumentReferenceValue("visits/v1"), new FileReferenceValue("scans/a.png"), new UserReferenceValue("u9")),
+            ((DocumentReferenceValue)note!.Fields["visit"], (FileReferenceValue)note.Fields["scan"], (UserReferenceValue)note.Fields["by"]));
         Assert.Equal("Ann", (string?)data["queried"]);
         Assert.Equal("doctors/d1", (string?)data["queriedDoctor"]);   // only "patient" was expanded
         Assert.Equal(42, (int?)data["scanSize"]);

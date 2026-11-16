@@ -212,9 +212,9 @@ export interface BeforeOptions {
  * scan: ref.file("scans/a.png"), author: ref.user(ctx.auth!.uid) }`. Read back, they are their paths and uids.
  */
 export const ref = {
-  doc: (path: string) => ({ $docRef: path }),
-  file: (path: string) => ({ $fileRef: path }),
-  user: (uid: string) => ({ $userRef: uid }),
+  doc: (path: string) => ({ $documentReference: path }),
+  file: (path: string) => ({ $fileReference: path }),
+  user: (uid: string) => ({ $userReference: uid }),
 };
 
 /** The kinds of error every Winche API and SDK shares: the `code` an app receives. */
