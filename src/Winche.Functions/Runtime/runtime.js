@@ -48,7 +48,7 @@ const readOnly = (what) => () => Promise.reject(Object.assign(
 const context = (c) => c.readOnly ? lock(full(c)) : full(c);
 const lock = (ctx) => ({
   ...ctx,
-  db: { ...ctx.db, set: readOnly("ctx.db.set"), update: readOnly("ctx.db.update"), delete: readOnly("ctx.db.delete") },
+  db: { ...ctx.db, set: readOnly("ctx.db.set"), update: readOnly("ctx.db.update"), delete: readOnly("ctx.db.delete"), batch: readOnly("ctx.db.batch") },
   files: { ...ctx.files, write: readOnly("ctx.files.write"), downloadUrl: readOnly("ctx.files.downloadUrl"), delete: readOnly("ctx.files.delete"), deleteUnder: readOnly("ctx.files.deleteUnder") },
   users: { ...ctx.users, setClaims: readOnly("ctx.users.setClaims") },
 });
@@ -72,6 +72,7 @@ const full = (c) => ({
     set: (path, data, o) => call("db.set", { path, data: encode(data), merge: !!o?.merge }),
     update: (path, data) => call("db.update", { path, data: encode(data) }),
     delete: (path, o) => call("db.delete", { path, recursive: !!o?.recursive }),
+    batch: (writes) => call("db.batch", { writes: writes.map((w) => (w.data ? { ...w, data: encode(w.data) } : w)) }),
     query: (collection, q) => call("db.query", { collection, ...(q ?? {}), ...(q?.where ? { where: q.where.map(([f, op, v]) => [f, op, encode(v)]) } : {}) }),
   },
   files: {

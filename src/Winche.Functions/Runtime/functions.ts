@@ -151,6 +151,18 @@ export interface ScheduleEvent {
 
 export type Where = [field: string, op: "==" | "!=" | "<" | "<=" | ">" | ">=" | "array-contains" | "in", value: Json | Date];
 
+/** A condition on a write in a batch: the document exists (or not), or is unchanged since it was read (its updateTime). */
+export interface Precondition {
+  exists?: boolean;
+  updateTime?: string;
+}
+
+/** One write of a batch. */
+export type BatchWrite =
+  | { set: string; data: { [field: string]: Writable }; merge?: boolean; precondition?: Precondition }
+  | { update: string; data: { [field: string]: Writable }; precondition?: Precondition }
+  | { delete: string; precondition?: Precondition };
+
 export interface Db {
   /**
    * The document, or null. With `expand`, the references at those paths ("patient", "patient.doctor", "team",
@@ -163,6 +175,11 @@ export interface Db {
   set(path: string, data: { [field: string]: Writable }, options?: { merge?: boolean }): Promise<void>;
   /** Changes the given fields of an existing document. */
   update(path: string, data: { [field: string]: Writable }): Promise<void>;
+  /**
+   * Up to 500 writes, all or none. A precondition that doesn't hold fails the whole batch with code
+   * "failed-precondition" (or "already-exists" for { exists: false }): read again and retry, or leave it.
+   */
+  batch(writes: BatchWrite[]): Promise<void>;
   /** Deletes the document; with { recursive: true } everything under it too. */
   delete(path: string, options?: { recursive?: boolean }): Promise<number>;
   /** Documents of a collection, filtered and sorted. */

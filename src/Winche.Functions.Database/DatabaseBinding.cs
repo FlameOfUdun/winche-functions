@@ -104,6 +104,14 @@ internal sealed class DatabaseBinding : IFunctionBinding
         {
             switch (op)
             {
+                case "batch":
+                {
+                    // Several writes, all or none, each with an optional precondition (unchanged since read, must not exist).
+                    var items = args["writes"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give writes.");
+                    if (items.Count is 0 or > 500) throw new FunctionCallException("invalid-argument", "A batch has 1 to 500 writes.");
+                    await db.WriteAsync([.. items.Select(BatchWrite)], ct);
+                    return null;
+                }
                 case "get":
                 {
                     var doc = await db.GetAsync(Path(args), ct);
@@ -194,6 +202,31 @@ internal sealed class DatabaseBinding : IFunctionBinding
         JsonValue v => new StringValue(v.ToString()),
         _ => new NullValue(),
     };
+
+    /// <summary>One write of a batch: { set | update | delete: path, data?, merge?, precondition?: { exists?, updateTime? } }.</summary>
+    private static Write BatchWrite(JsonNode? node)
+    {
+        if (node is not JsonObject w) throw new FunctionCallException("invalid-argument", "Each write is { set | update | delete: path, … }.");
+        string P(string key) => w[key]!.GetValue<string>().Trim('/') is { Length: > 0 } p ? p : throw new FunctionCallException("invalid-argument", $"Give the {key} path.");
+        Precondition? pre = null;
+        if (w["precondition"] is JsonObject c)
+        {
+            DateTimeOffset? at = null;
+            if (c["updateTime"]?.GetValue<string>() is { } t)
+                at = DateTimeOffset.TryParse(t, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                    ? parsed : throw new FunctionCallException("invalid-argument", $"precondition.updateTime '{t}' isn't a time.");
+            pre = new Precondition(c["exists"]?.GetValue<bool>(), at);
+        }
+        if (w.ContainsKey("set")) return new SetWrite { Path = P("set"), Fields = Fields(w["data"]), Merge = w["merge"]?.GetValue<bool>() == true, Precondition = pre };
+        if (w.ContainsKey("update"))
+            return new UpdateWrite
+            {
+                Path = P("update"), Fields = Fields(w["data"]).ToDictionary(kv => FieldPath.Parse(kv.Key), kv => kv.Value),
+                Precondition = pre ?? new Precondition(Exists: true),
+            };
+        if (w.ContainsKey("delete")) return new DeleteWrite { Path = P("delete"), Precondition = pre };
+        throw new FunctionCallException("invalid-argument", "Each write is { set | update | delete: path, … }.");
+    }
 
     private static Query Query(JsonObject args)
     {
