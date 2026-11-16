@@ -13,7 +13,13 @@ namespace Winche.Functions;
 /// </summary>
 internal sealed class FunctionHooks(WincheFunctions functions) : IHookProvider
 {
-    public IReadOnlyList<HookSettings> Hooks => [.. (functions.Current?.Functions ?? []).Where(f => f.Trigger.Kind is not ("callable" or "before")).Select(f => new HookSettings
+    /// <summary>
+    /// Only functions that events start: callables, HTTP functions, console pages and actions are called, never sent
+    /// events (as hooks without events of their own, they'd run on every schedule's tick).
+    /// </summary>
+    internal static bool IsTriggered(FunctionInfo f) => f.Trigger.Kind is "documents" or "files" or "users" or "schedule" or "assets";
+
+    public IReadOnlyList<HookSettings> Hooks => [.. (functions.Current?.Functions ?? []).Where(IsTriggered).Select(f => new HookSettings
     {
         Id = $"fn.{f.Name}", Name = $"Function {f.Name}", Enabled = true,
         When = new HookTrigger

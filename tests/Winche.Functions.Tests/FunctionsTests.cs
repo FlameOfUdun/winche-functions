@@ -195,8 +195,11 @@ public class FunctionsTests(PostgresFixture pg)
         var db = await pg.NewDatabaseAsync();
         await using var app = await FunctionsApp.StartAsync(db);
         await app.Service<WincheFunctions>().DeployAsync(Code("""
-            import { schedule } from "@winche/functions";
+            import { consoleAction, http, schedule } from "@winche/functions";
             let tries = 0;
+            // Called, never sent events: a schedule's tick mustn't run them.
+            export const wipe = consoleAction(async (_d, ctx) => { await ctx.documents.doc("state/wrong").set({ by: "wipe" }); });
+            export const hook = http.onRequest(async (_r, ctx) => { await ctx.documents.doc("state/wrong").set({ by: "hook" }); return "ok"; });
             export const tidy = schedule("*/5 * * * *", async (e, ctx) => {
               const runs = ((await ctx.documents.doc("state/tidy").get()).get("runs") as number) ?? 0;
               if (runs === 0 && !(await ctx.documents.doc("state/failed").get()).exists) {
@@ -223,6 +226,9 @@ public class FunctionsTests(PostgresFixture pg)
         Assert.Equal(1L, ((IntegerValue)(await documents.GetAsync("state/tidy"))!.Fields["runs"]).Value);
         var delivery = Assert.Single(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.tidy"));
         Assert.Equal((2, "delivered"), (delivery.Attempts, delivery.Status));
+        Assert.Null(await documents.GetAsync("state/wrong"));
+        Assert.Empty(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.wipe"));
+        Assert.Empty(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.hook"));
     }
 
     [Fact]
