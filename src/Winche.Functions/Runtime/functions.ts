@@ -17,6 +17,9 @@
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
+/** What can be written to a document: JSON, with Dates as timestamps (and references from `ref`). */
+export type Writable = null | boolean | number | string | Date | Writable[] | { [key: string]: Writable };
+
 /** A document as functions see it: fields as plain JSON (timestamps as ISO text, references as paths). */
 export interface DocumentData {
   path: string;
@@ -157,9 +160,9 @@ export interface Db {
    */
   get(path: string, options?: { expand?: string[] }): Promise<DocumentData | null>;
   /** Writes the whole document (or only the given fields with { merge: true }). */
-  set(path: string, data: { [field: string]: Json }, options?: { merge?: boolean }): Promise<void>;
+  set(path: string, data: { [field: string]: Writable }, options?: { merge?: boolean }): Promise<void>;
   /** Changes the given fields of an existing document. */
-  update(path: string, data: { [field: string]: Json }): Promise<void>;
+  update(path: string, data: { [field: string]: Writable }): Promise<void>;
   /** Deletes the document; with { recursive: true } everything under it too. */
   delete(path: string, options?: { recursive?: boolean }): Promise<number>;
   /** Documents of a collection, filtered and sorted. */
