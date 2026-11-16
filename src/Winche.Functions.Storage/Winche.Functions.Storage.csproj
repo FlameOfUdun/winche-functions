@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Storage" Version="9.1.0" />
+    <PackageReference Include="Winche.Storage" Version="10.0.0" />
     <ProjectReference Include="..\Winche.Functions\Winche.Functions.csproj" />
   </ItemGroup>
 
