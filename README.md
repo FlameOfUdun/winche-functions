@@ -271,8 +271,11 @@ export const sendReport = documents.onCreated("reports/{id}", async (e, ctx) => 
 - **Logs and errors** show `••••` in place of a secret's value (values of 4 characters or more).
 - **The console lists** each secret's name, when and by whom it was set, and which functions declare it, including the
   ones a function declares but nobody has set yet.
-- They need Winche.Core's `AddWincheConfig` with a master key (Winche Server has it); a deployment that declares secrets
-  without it is refused.
+- **References:** a secret can instead say where it's kept (`aws-ssm:/app/mail-key`, `aws-sm:app/ses#secretAccessKey`,
+  with Winche.Secrets.Aws): read when a function runs, kept a few minutes. One that can't be read fails the run with
+  `failed-precondition` and the reason (never a value). See Winche.Secrets.
+- They're kept by Winche.Secrets, which needs Winche.Core's `AddWincheConfig` with a master key (Winche Server has it);
+  a deployment that declares secrets without it is refused.
 
 ## Console pages
 
