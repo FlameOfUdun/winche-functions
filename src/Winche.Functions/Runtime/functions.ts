@@ -146,7 +146,7 @@ export interface ScheduleEvent {
   id: string;
 }
 
-export type Where = [field: string, op: "==" | "!=" | "<" | "<=" | ">" | ">=" | "array-contains" | "in", value: Json];
+export type Where = [field: string, op: "==" | "!=" | "<" | "<=" | ">" | ">=" | "array-contains" | "in", value: Json | Date];
 
 export interface Db {
   /**
@@ -163,7 +163,11 @@ export interface Db {
   /** Deletes the document; with { recursive: true } everything under it too. */
   delete(path: string, options?: { recursive?: boolean }): Promise<number>;
   /** Documents of a collection, filtered and sorted. */
-  query(collection: string, query?: { where?: Where[]; orderBy?: [field: string, direction?: "asc" | "desc"][]; limit?: number; expand?: string[] }): Promise<DocumentData[]>;
+  /**
+   * Documents of a collection, filtered and sorted (by document name when no orderBy), up to `limit` (default 100,
+   * at most 1000). For the next page, pass the last document's path as `startAfter`. Dates in `where` are timestamps.
+   */
+  query(collection: string, query?: { where?: Where[]; orderBy?: [field: string, direction?: "asc" | "desc"][]; limit?: number; startAfter?: string; expand?: string[] }): Promise<DocumentData[]>;
 }
 
 export interface WriteFileOptions {

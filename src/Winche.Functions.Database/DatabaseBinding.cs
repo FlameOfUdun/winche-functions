@@ -129,7 +129,14 @@ internal sealed class DatabaseBinding : IFunctionBinding
                     return existed ? 1 : 0;
                 case "query":
                 {
-                    var result = await db.QueryAsync(Query(args), ct);
+                    var query = Query(args);
+                    if (args["startAfter"]?.GetValue<string>() is { Length: > 0 } after)
+                    {
+                        // The next page: after that document, in the query's order.
+                        var last = await db.GetAsync(after.Trim('/'), ct) ?? throw new FunctionCallException("not-found", $"startAfter: there's no document {after}.");
+                        query = query with { Start = Cursor.FromDocument(last, query.OrderBy, before: false) };
+                    }
+                    var result = await db.QueryAsync(query, ct);
                     var expand = Expand(args, services);
                     if (expand is null) return new JsonArray([.. result.Documents.Select(d => (JsonNode?)Plain.Of(d))]);
                     var expansion = await ReferenceExpander.ExpandAsync(db, result.Documents, expand, ct, Resolution(services, db));

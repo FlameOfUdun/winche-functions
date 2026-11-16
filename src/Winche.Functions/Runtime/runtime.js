@@ -72,7 +72,7 @@ const full = (c) => ({
     set: (path, data, o) => call("db.set", { path, data: encode(data), merge: !!o?.merge }),
     update: (path, data) => call("db.update", { path, data: encode(data) }),
     delete: (path, o) => call("db.delete", { path, recursive: !!o?.recursive }),
-    query: (collection, q) => call("db.query", { collection, ...(q ?? {}) }),
+    query: (collection, q) => call("db.query", { collection, ...(q ?? {}), ...(q?.where ? { where: q.where.map(([f, op, v]) => [f, op, encode(v)]) } : {}) }),
   },
   files: {
     list: (folder) => call("files.list", { folder }),
