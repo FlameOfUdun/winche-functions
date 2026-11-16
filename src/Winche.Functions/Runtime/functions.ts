@@ -306,6 +306,7 @@ export type Trigger =
   | { kind: "schedule"; cron: string; timeZone?: string }
   | { kind: "callable" }
   | { kind: "consolePage" }
+  | { kind: "http"; events?: string[] }
   | { kind: "consoleAction" }
   | { kind: "before"; on: "documents" | "files" | "users"; events: string[]; path?: string };
 
@@ -388,3 +389,21 @@ export const consolePage = (options: ConsolePageOptions): WincheFunction<never, 
  */
 export const consoleAction = <D = Json, R = Json>(handler: (data: D, ctx: Context) => R | Promise<R>, options?: ConsoleActionOptions) =>
   define<D, R>({ kind: "consoleAction" }, handler, options);
+
+export interface HttpOptions extends FunctionOptions {
+  /** The methods it answers (GET, POST, PUT, PATCH, DELETE, HEAD); every method when not given. */
+  methods?: ("GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD")[];
+}
+
+/** The request an HTTP function gets: a standard Request, with the caller's address. */
+export type HttpRequest = Request & { ip: string | null };
+
+/**
+ * Answers web requests at /functions/v1/http/{name} (and below it): links in emails, other services' webhooks. It gets
+ * a standard Request and returns a Response (or text, or JSON). Anyone can call it: check what you need yourself (a
+ * signature with ctx.secrets, a token in the link). Bodies up to 1 MB.
+ */
+export const http = {
+  onRequest: (handler: (req: HttpRequest, ctx: Context) => Response | string | Json | void | Promise<Response | string | Json | void>, options?: HttpOptions) =>
+    define({ kind: "http", events: options?.methods }, handler, options),
+};

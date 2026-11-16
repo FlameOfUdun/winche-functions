@@ -27,6 +27,9 @@ public sealed class FunctionsOptions
     /// </summary>
     public Func<Microsoft.AspNetCore.Http.HttpContext, IReadOnlyDictionary<string, object?>?>? Claims { get; set; }
 
+    /// <summary>The largest request body an HTTP function takes (default 1 MB); larger ones are refused with 413.</summary>
+    public long MaxHttpRequestBytes { get; set; } = 1L << 20;
+
     /// <summary>How often each server looks for a new deployment made on another server (default 3 s).</summary>
     public TimeSpan SyncInterval { get; set; } = TimeSpan.FromSeconds(3);
 }

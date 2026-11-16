@@ -72,6 +72,39 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
 
+## HTTP functions
+
+`http.onRequest` answers web requests at `/functions/v1/http/{name}` (and any path below it): links in emails, other
+services' webhooks. It gets a standard `Request` and returns a `Response`, text, JSON, or nothing (204).
+
+```ts
+import { http, HttpsError } from "@winche/functions";
+
+// A link sent by email, valid for days: /functions/v1/http/download/<token>
+export const download = http.onRequest(async (req, ctx) => {
+  const token = new URL(req.url).pathname.split("/").pop();
+  const link = await ctx.db.get(`downloadLinks/${token}`);
+  if (!link) throw new HttpsError("not-found", "This link has ended.");
+  return Response.redirect((await ctx.files.downloadUrl(String(link.fields.path))).url, 302);
+}, { methods: ["GET"] });
+
+// Another service's webhook, checked with its signing secret.
+export const paymentEvents = http.onRequest(async (req, ctx) => {
+  const body = await req.text();
+  if (!(await validSignature(body, req.headers.get("x-signature"), ctx.secrets.get("PAYMENTS_SECRET"))))
+    return new Response("bad signature", { status: 401 });
+  // …
+  return { ok: true };
+}, { methods: ["POST"], secrets: ["PAYMENTS_SECRET"] });
+```
+
+- **Open to anyone:** there's no signed-in caller (`ctx.auth` is null). Check what you need yourself: a signature, a
+  token in the link, an API key from `ctx.secrets`.
+- `methods` limits them (others get 405); every method by default. `req.ip` is the caller's address.
+- Request bodies up to 1 MB (`FunctionsOptions.MaxHttpRequestBytes`); larger ones get 413. A thrown `HttpsError` is an
+  error answer with its status and message, as for callables.
+- They can't be called as callables, and callables can't be reached here.
+
 ## Files
 
 `ctx.files` reads and writes the project's files with the server's rights:

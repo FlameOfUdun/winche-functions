@@ -114,7 +114,9 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 problems.Add(source == "schedule" || catalog is null
                     ? $"{name}: triggers need Winche.Webhooks in this app (AddWincheHooks)."
                     : $"{name}: this app has no {source} events (add Winche.Webhooks.{char.ToUpperInvariant(source[0])}{source[1..]}).");
-            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "consoleAction"))
+            if (trigger.Kind == "http" && trigger.Events is { } methods && methods.Any(m => m is not ("GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD")))
+                problems.Add($"{name}: methods are GET, POST, PUT, PATCH, DELETE or HEAD.");
+            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "consoleAction" or "http"))
                 problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
             string? minRole = null;
             ConsolePageInfo? page = null;

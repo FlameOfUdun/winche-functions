@@ -114,6 +114,21 @@ self.onmessage = async (m) => {
     }
     const fn = mod[d.name];
     if (!fn || fn.__winche !== 1) throw Object.assign(new Error("There's no function " + d.name + " in this deployment."), { code: "not-found" });
+    if (fn.trigger.kind === "http") {
+      // A standard Request in, a standard Response (or text, or JSON) out.
+      const a = d.arg;
+      const request = new Request(a.url, { method: a.method, headers: a.headers,
+        body: a.body && a.method !== "GET" && a.method !== "HEAD" ? fromBase64(a.body) : undefined });
+      Object.defineProperty(request, "ip", { value: a.ip ?? null });
+      let out = await fn.handler(request, context(d.context));
+      if (!(out instanceof Response))
+        out = out === undefined || out === null ? new Response(null, { status: 204 })
+          : typeof out === "string" ? new Response(out, { headers: { "content-type": "text/plain; charset=utf-8" } })
+          : Response.json(out);
+      const bytes = new Uint8Array(await out.arrayBuffer());
+      postMessage({ t: "done", result: { status: out.status, headers: [...out.headers], body: bytes.length ? toBase64(bytes) : null } });
+      return;
+    }
     const result = await fn.handler(d.arg, context(d.context));
     postMessage({ t: "done", result: result === undefined ? null : JSON.parse(JSON.stringify(result)) });
   } catch (e) {

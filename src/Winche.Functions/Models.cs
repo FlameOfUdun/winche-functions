@@ -15,6 +15,7 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
         "schedule" => $"schedule {Cron}{(TimeZone is null ? " (UTC)" : $" ({TimeZone})")}",
         "before" => $"before {On} {string.Join("/", Events ?? [])}{(Path is null ? "" : $" at {Path}")}",
         "consolePage" => "a console page",
+        "http" => $"HTTP {(Events is { Count: > 0 } m ? string.Join("/", m) : "any method")} at /functions/v1/http/{{name}}",
         "consoleAction" => "run from console pages",
         _ => "called by apps",
     };

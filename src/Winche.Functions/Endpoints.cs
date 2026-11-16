@@ -51,6 +51,64 @@ public static class FunctionsEndpoints
             return Send(ErrorOf(result));
         });
 
+        // HTTP functions: any request to /http/{name}[/…] runs it with a standard Request and sends back its Response.
+        // Open to anyone: the function checks what it needs (a signature, a token in the link).
+        group.Map("/http/{name}", (string name, HttpContext http, WincheFunctions functions, FunctionsOptions options, CancellationToken ct) =>
+            HttpAsync(name, http, functions, options, ct));
+        group.Map("/http/{name}/{**rest}", (string name, HttpContext http, WincheFunctions functions, FunctionsOptions options, CancellationToken ct) =>
+            HttpAsync(name, http, functions, options, ct));
+
         return app;
+    }
+
+    // Headers a function's response can't set: the server handles these itself.
+    private static readonly HashSet<string> Hop = new(StringComparer.OrdinalIgnoreCase)
+        { "connection", "transfer-encoding", "content-length", "keep-alive", "upgrade", "proxy-connection", "trailer" };
+
+    private static async Task HttpAsync(string name, HttpContext http, WincheFunctions functions, FunctionsOptions options, CancellationToken ct)
+    {
+        if (functions.Current is null) await functions.RefreshAsync(ct);
+        var fn = functions.Current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "http");
+        if (fn is null) { await Send(new WincheError(WincheErrorCode.NotFound, $"There's no HTTP function {name}.")).ExecuteAsync(http); return; }
+        if (fn.Trigger.Events is { Count: > 0 } methods && !methods.Contains(http.Request.Method, StringComparer.OrdinalIgnoreCase))
+        {
+            http.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+            http.Response.Headers.Allow = string.Join(", ", methods);
+            await http.Response.WriteAsJsonAsync(new { error = new { code = "invalid-argument", message = $"{name} takes {string.Join(", ", methods)}." } }, ct);
+            return;
+        }
+        if (http.Request.ContentLength > options.MaxHttpRequestBytes)
+        {
+            http.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+        using var body = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await http.Request.Body.ReadAsync(buffer, ct)) > 0)
+        {
+            body.Write(buffer, 0, read);
+            if (body.Length > options.MaxHttpRequestBytes) { http.Response.StatusCode = StatusCodes.Status413PayloadTooLarge; return; }
+        }
+        var r = http.Request;
+        var request = new JsonObject
+        {
+            ["url"] = $"{r.Scheme}://{r.Host}{r.PathBase}{r.Path}{r.QueryString}",
+            ["method"] = r.Method,
+            ["headers"] = new JsonObject(r.Headers.Select(h => KeyValuePair.Create(h.Key.ToLowerInvariant(), (JsonNode?)JsonValue.Create(h.Value.ToString())))),
+            ["body"] = body.Length == 0 ? null : Convert.ToBase64String(body.GetBuffer(), 0, (int)body.Length),
+            ["ip"] = http.Connection.RemoteIpAddress?.ToString(),
+        };
+        var result = await functions.InvokeAsync(name, request, FunctionCaller.Server, ct, kind: "http");
+        if (!result.Ok) { await Send(ErrorOf(result)).ExecuteAsync(http); return; }
+        var answer = result.Result as JsonObject ?? [];
+        http.Response.StatusCode = answer["status"]?.GetValue<int>() ?? 200;
+        foreach (var pair in answer["headers"] as JsonArray ?? [])
+        {
+            if (pair is not JsonArray { Count: 2 } kv || kv[0]?.GetValue<string>() is not { } key || Hop.Contains(key)) continue;
+            http.Response.Headers.Append(key, kv[1]?.GetValue<string>());
+        }
+        if (answer["body"]?.GetValue<string>() is { Length: > 0 } b64 && http.Request.Method != "HEAD")
+            await http.Response.Body.WriteAsync(Convert.FromBase64String(b64), ct);
     }
 }
