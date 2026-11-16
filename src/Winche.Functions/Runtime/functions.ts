@@ -191,6 +191,14 @@ export interface Secrets {
   has(name: string): boolean;
 }
 
+/** Who ran a console action: their console account and their role in this project. */
+export interface ConsoleUser {
+  email: string | null;
+  role: ConsoleRole;
+}
+
+export type ConsoleRole = "viewer" | "member" | "admin";
+
 export interface Context {
   /** This function's name (its export name). */
   functionName: string;
@@ -201,6 +209,8 @@ export interface Context {
   users: Users;
   /** The secrets this function declared in its options. */
   secrets: Secrets;
+  /** For console actions: who ran it from the console (null otherwise). */
+  console: { user: ConsoleUser } | null;
   /** Writes to the server's logs (Logs → functions); console.log does too. */
   log(...args: unknown[]): void;
 }
@@ -251,12 +261,33 @@ export class HttpsError extends Error {
   }
 }
 
+/** A page of the project's own in the console: its files are yours (HTML, JS, CSS), shown in a sandboxed frame. */
+export interface ConsolePageOptions {
+  /** In the console's sidebar. */
+  title: string;
+  /** The folder of the page's files, next to index.ts (e.g. "console/reports"): it must hold an index.html. */
+  files: string;
+  /** A Tabler icon name (e.g. "chart-bar"); the default is a page icon. */
+  icon?: string;
+  /** Who sees it (default viewer). Actions check their own role too. */
+  minRole?: ConsoleRole;
+  /** Where it goes in the sidebar, lowest first (default 0, then by title). */
+  order?: number;
+}
+
+export interface ConsoleActionOptions extends FunctionOptions {
+  /** Who may run it from the console (default admin). */
+  minRole?: ConsoleRole;
+}
+
 export type Trigger =
   | { kind: "documents"; events: string[]; path: string }
   | { kind: "files"; events: string[]; path: string }
   | { kind: "users"; events: string[] }
   | { kind: "schedule"; cron: string; timeZone?: string }
   | { kind: "callable" }
+  | { kind: "consolePage" }
+  | { kind: "consoleAction" }
   | { kind: "before"; on: "documents" | "files" | "users"; events: string[]; path?: string };
 
 /** What an exported function is: Winche reads these when the code is deployed. */
@@ -324,3 +355,17 @@ export const schedule = (cron: string, handler: Handler<ScheduleEvent>, options?
 /** Called by apps (the SDKs' functions.call("name", data)); returns JSON to the caller. */
 export const callable = <D = Json, R = Json>(handler: (data: D, ctx: Context) => R | Promise<R>, options?: FunctionOptions) =>
   define<D, R>({ kind: "callable" }, handler, options);
+
+/**
+ * A page in the console made of your own files: `consolePage({ title: "Reports", files: "console/reports" })` shows
+ * console/reports/index.html in a sandboxed frame, with `window.winche` to run console actions (see the README).
+ */
+export const consolePage = (options: ConsolePageOptions): WincheFunction<never, null> =>
+  define({ kind: "consolePage" }, () => null, options as unknown as FunctionOptions);
+
+/**
+ * Run from a console page (`winche.call("name", data)`) by someone whose role in the project is at least minRole
+ * (default admin); apps can't call it. ctx.console.user says who. Returns JSON to the page.
+ */
+export const consoleAction = <D = Json, R = Json>(handler: (data: D, ctx: Context) => R | Promise<R>, options?: ConsoleActionOptions) =>
+  define<D, R>({ kind: "consoleAction" }, handler, options);

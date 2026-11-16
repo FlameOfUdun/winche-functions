@@ -58,6 +58,7 @@ const full = (c) => ({
   functionName: c.functionName,
   auth: c.auth ?? null,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),
+  console: c.console ?? null,
   log: (...a) => console.log(...a),
   db: {
     get: (path, o) => call("db.get", { path, ...(o?.expand ? { expand: o.expand } : {}) }),

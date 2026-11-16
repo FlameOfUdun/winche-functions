@@ -50,7 +50,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         JsonArray found;
         try { found = await runtime.AnalyzeAsync(check, bundle, ct); }
         finally { await runtime.ForgetAsync(check, CancellationToken.None); }
-        var functions = Read(found, out var problems);
+        var functions = Read(found, files, out var problems);
         if (problems.Count > 0) throw new FunctionDeployException("These functions can't be deployed.", problems);
         var deployment = await store.AddAsync(files, bundle, functions, note, by, rolledBackFrom, ct);
         _log.LogInformation("Functions version {Version} deployed by {By}: {Functions}.", deployment.Version, by ?? "someone",
@@ -66,7 +66,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         return await DeployAsync(old.Files, note ?? $"Back to version {version}", by, ct, version);
     }
 
-    private IReadOnlyList<FunctionInfo> Read(JsonArray found, out List<string> problems)
+    private IReadOnlyList<FunctionInfo> Read(JsonArray found, IReadOnlyDictionary<string, string> files, out List<string> problems)
     {
         problems = [];
         var list = new List<FunctionInfo>();
@@ -114,7 +114,29 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 problems.Add(source == "schedule" || catalog is null
                     ? $"{name}: triggers need Winche.Webhooks in this app (AddWincheHooks)."
                     : $"{name}: this app has no {source} events (add Winche.Webhooks.{char.ToUpperInvariant(source[0])}{source[1..]}).");
-            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before")) problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
+            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "consoleAction"))
+                problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
+            string? minRole = null;
+            ConsolePageInfo? page = null;
+            if (trigger.Kind is "consolePage" or "consoleAction")
+            {
+                minRole = node["options"]?["minRole"]?.GetValueKind() == JsonValueKind.String ? node["options"]!["minRole"]!.GetValue<string>()
+                    : trigger.Kind == "consolePage" ? "viewer" : "admin";
+                if (ConsolePages.Rank(minRole) < 0) problems.Add($"{name}: minRole is viewer, member or admin.");
+            }
+            if (trigger.Kind == "consolePage")
+            {
+                var o = node["options"] as JsonObject ?? [];
+                var title = o["title"]?.GetValueKind() == JsonValueKind.String ? o["title"]!.GetValue<string>().Trim() : "";
+                var folder = o["files"]?.GetValueKind() == JsonValueKind.String ? ConsolePages.Folder(o["files"]!.GetValue<string>()) : null;
+                var icon = o["icon"]?.GetValueKind() == JsonValueKind.String ? o["icon"]!.GetValue<string>() : null;
+                var order = o["order"]?.GetValueKind() == JsonValueKind.Number ? (int)o["order"]!.GetValue<double>() : 0;
+                if (title.Length is 0 or > 60) problems.Add($"{name}: give the page a title (up to 60 characters).");
+                if (folder is null) problems.Add($"{name}: files is the folder of the page's files, next to index.ts (e.g. \"console/reports\").");
+                else if (!files.ContainsKey($"{folder}/index.html")) problems.Add($"{name}: there's no {folder}/index.html in what was deployed.");
+                if (icon is not null && !ConsolePages.IconName.IsMatch(icon)) problems.Add($"{name}: icon is a Tabler icon name, e.g. \"chart-bar\".");
+                page = new ConsolePageInfo(title, folder ?? "", icon, order);
+            }
             List<string>? declared = null;
             if (node["options"]?["secrets"] is { } given)
             {
@@ -128,7 +150,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                     if (declared.Count == 0) declared = null;
                 }
             }
-            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared));
+            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page));
         }
         return list;
     }
@@ -141,7 +163,26 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         await InvokeAsync(name, arg, caller, ct, kind, readOnly: false);
 
     /// <summary>As above; with <paramref name="readOnly"/> its ctx.* calls may only read (before-functions).</summary>
-    internal async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly)
+    internal Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly) =>
+        InvokeAsync(name, arg, caller, ct, kind, readOnly, console: null);
+
+    /// <summary>
+    /// Runs console action <paramref name="name"/> for someone in the console: refused (permission-denied) unless their
+    /// role is at least the action's minRole. <paramref name="role"/> is viewer, member or admin.
+    /// </summary>
+    public async Task<FunctionResult> RunConsoleActionAsync(string name, JsonNode? arg, string? email, string role, CancellationToken ct = default)
+    {
+        if (_current is null) await RefreshAsync(ct);
+        var fn = _current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consoleAction");
+        if (fn is null) return FunctionResult.Failed("not-found", $"There's no console action {name}.");
+        if (ConsolePages.Rank(role) < ConsolePages.Rank(fn.MinRole ?? "admin"))
+            return FunctionResult.Failed("permission-denied", $"{name} needs the {fn.MinRole} role.") with { PublicError = true };
+        _log.LogInformation("Console action {Function} run by {By} ({Role}).", name, email ?? "someone", role);
+        return await InvokeAsync(name, arg, FunctionCaller.Server, ct, "consoleAction", readOnly: false,
+            console: new JsonObject { ["user"] = new JsonObject { ["email"] = email, ["role"] = role } });
+    }
+
+    private async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
     {
         if (_current is null) await RefreshAsync(ct);
         var d = _current;
@@ -175,6 +216,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             ["functionName"] = name,
             ["readOnly"] = readOnly,
             ["auth"] = caller.Uid is null ? null : new JsonObject { ["uid"] = caller.Uid, ["token"] = JsonSerializer.SerializeToNode(caller.Token ?? new Dictionary<string, object?>()) },
+            ["console"] = console,
             ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };
         var watch = Stopwatch.StartNew();

@@ -29,7 +29,7 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 
 | Package | |
 | --- | --- |
-| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`). Deployed through the console (`winche functions deploy`, as you or a CI token). |
+| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`), console pages and actions. Deployed through the console (`winche functions deploy`, as you or a CI token). |
 | `Winche.Functions.Database` | `ctx.db`: get, set, update, delete (recursive too), query — with the server's rights; `get` and `query` take `expand`. |
 | `Winche.Functions.Storage` | `ctx.files`: list, delete, deleteUnder. |
 | `Winche.Functions.Auth` | `ctx.users`: get, setClaims (Winche Auth). |
@@ -92,6 +92,86 @@ export const sendReport = documents.onCreated("reports/{id}", async (e, ctx) => 
   ones a function declares but nobody has set yet.
 - They need Winche.Core's `AddWincheConfig` with a master key (Winche Server has it); a deployment that declares secrets
   without it is refused.
+
+## Console pages
+
+A project can add pages of its own to the console: dashboards, admin tools, anything its team needs. The page is
+yours: plain HTML, JavaScript and CSS, or the build output of any framework, in a folder next to `index.ts`. The console
+shows it in its sidebar (under **Project pages**) and has no say in how it looks. What it shows comes from **console
+actions**: functions only the console can run, for someone whose role in the project is high enough.
+
+```ts
+import { consolePage, consoleAction, HttpsError } from "@winche/functions";
+
+// console/reports/index.html (and its scripts, styles, images) is the page.
+export const reports = consolePage({ title: "Reports", files: "console/reports", icon: "chart-bar", minRole: "viewer" });
+
+export const weeklyCounts = consoleAction(async (data: { weeks: number }, ctx) => {
+  const visits = await ctx.db.query("visits", { where: [["at", ">=", weeksAgo(data.weeks)]] });
+  return { visits: visits.length };
+}, { minRole: "viewer" });
+
+export const closeWard = consoleAction(async (data: { ward: string }, ctx) => {
+  if (!data.ward) throw new HttpsError("invalid-argument", "Which ward?");
+  await ctx.db.update(`wards/${data.ward}`, { closedBy: ctx.console!.user.email, closedAt: new Date() });
+}, { minRole: "admin" });
+```
+
+```html
+<!-- console/reports/index.html -->
+<!doctype html>
+<html>
+  <head><link rel="stylesheet" href="style.css" /></head>
+  <body>
+    <h1>Visits</h1> <p id="count">…</p> <button id="close">Close ward 3</button>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
+```
+
+```js
+// console/reports/app.js — window.winche is there before your scripts run.
+await winche.ready;
+const { visits } = await winche.call("weeklyCounts", { weeks: 4 });
+document.querySelector("#count").textContent = `${visits} in the last 4 weeks`;
+document.querySelector("#close").hidden = winche.user.role !== "admin";
+document.querySelector("#close").onclick = async () => {
+  if (!(await winche.confirm("Close ward 3? Nobody can be admitted there until it's opened again.", { danger: true }))) return;
+  try { await winche.call("closeWard", { ward: "3" }); winche.toast("Ward 3 closed", "success"); }
+  catch (e) { winche.toast(e.message, "error"); }   // e.code: permission-denied, invalid-argument, …
+};
+```
+
+**`window.winche`** in a page:
+
+| | |
+| --- | --- |
+| `ready` | A promise: resolves once the page is connected to the console (`user` and `theme` are set). |
+| `call(name, data)` | Runs a console action as the signed-in person: its result, or an error with `code` and `message`. |
+| `user` | `{ email, role }`: role is `viewer`, `member` or `admin`, to show only what they can use. |
+| `theme` | `{ scheme: "light" \| "dark", colors, font }`, also as CSS variables (`--winche-page`, `--winche-card`, `--winche-text`, `--winche-muted`, `--winche-border`, `--winche-accent`, `--winche-font`…) and `data-winche-theme` on `<html>`; a `winche:theme` event when it changes. Use them or not. |
+| `confirm(text, { danger, confirmLabel })` | The console's own confirmation dialog: true or false. |
+| `toast(text, kind)` | A notice in the console (`info`, `success`, `error`). |
+| `navigate(path)` | Goes to a console page, e.g. `/database` or `/authentication/users`. |
+| `setTitle(text)` | A line under the page's title. |
+
+- **Options:** `consolePage({ title, files, icon, minRole, order })`. `files` is the folder; it must have an
+  `index.html`. `icon` is a [Tabler icon](https://tabler.io/icons) name. `minRole` (default `viewer`) decides who sees
+  it. `order` (default 0) sorts the sidebar. `consoleAction(handler, { minRole, timeoutSeconds, secrets })`: `minRole`
+  defaults to `admin`.
+- **Roles are checked on the server** for every action (hiding a button is only for looks). An admin-only action asks
+  for two-step sign-in where the console requires it for settings. Every run is logged with who ran it, and
+  `ctx.console.user` says who in the action. Actions run with the server's rights, like every function: `ctx.db`,
+  `ctx.files`, `ctx.users`, `ctx.secrets`.
+- **Apps can't call actions**, and pages can't call callables: `/functions/v1/call` only runs callables.
+- **Sandboxed:** the page runs in a frame with an origin of its own and no cookies of the console's, so it can't call
+  the console's API or read its session. Its scripts, styles, images and fonts come from its own folder (or inline);
+  it can't fetch from the network (`connect-src 'none'`): everything goes through `winche.call`. Links it opens go
+  to a new tab. If it navigates the frame elsewhere, it's disconnected and asks to be reloaded.
+- **Files:** `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.svg`, `.txt`, `.png`, `.jpg`, `.gif`, `.webp`, `.ico`,
+  `.woff`, `.woff2`, deployed with `winche functions deploy` (images and fonts as base64). They're versioned and
+  rolled back with the functions.
+- The emulators have no console: test a page's actions by calling them from your tests.
 
 ## Following references
 

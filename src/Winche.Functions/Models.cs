@@ -14,6 +14,8 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
         "users" => $"users {string.Join("/", Events ?? [])}",
         "schedule" => $"schedule {Cron}{(TimeZone is null ? " (UTC)" : $" ({TimeZone})")}",
         "before" => $"before {On} {string.Join("/", Events ?? [])}{(Path is null ? "" : $" at {Path}")}",
+        "consolePage" => "a console page",
+        "consoleAction" => "run from console pages",
         _ => "called by apps",
     };
 }
@@ -21,7 +23,13 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
 /// <summary>An exported function of a deployment.</summary>
 /// <param name="FailOpen">Before-functions: let the write through when the function crashes or times out.</param>
 /// <param name="Secrets">The secrets it declared (options.secrets), which it reads with ctx.secrets.get.</param>
-public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null);
+/// <param name="MinRole">Console actions and pages: the lowest console role that may run or see it (viewer, member, admin).</param>
+/// <param name="Page">Console pages: what the console shows.</param>
+public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null,
+    string? MinRole = null, ConsolePageInfo? Page = null);
+
+/// <summary>A console page: its sidebar title and icon, and the folder of its files in the deployment.</summary>
+public sealed record ConsolePageInfo(string Title, string Files, string? Icon, int Order);
 
 /// <summary>A deployed version: its source files, the bundle that runs, and the functions found in it.</summary>
 public sealed record Deployment(int Version, IReadOnlyDictionary<string, string> Files, string Bundle, IReadOnlyList<FunctionInfo> Functions,

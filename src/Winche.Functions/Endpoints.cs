@@ -14,7 +14,7 @@ public static class FunctionsEndpoints
     public sealed record CallRequest(JsonElement? Data);
 
     /// <summary>The shared error for a failed run: a code from the shared list, else <c>internal</c> with the code as reason.</summary>
-    internal static WincheError ErrorOf(FunctionResult result)
+    public static WincheError ErrorOf(FunctionResult result)
     {
         var code = result.ErrorCode ?? "internal";
         // The app sees its own errors (HttpsError) and plain failures; details of internal ones stay in the logs.
