@@ -2,14 +2,14 @@
 // stdin and answers on stdout. Each run happens in its own worker that may use the network but not the files,
 // environment or programs of the machine, and is stopped when its time is up.
 //
-// In:  {t:"code", version, url, file, assets}         — a deployment's bundle file and its assets' files (once per version)
+// In:  {t:"code", version, url, file, resources}         — a deployment's bundle file and its resources' files (once per version)
 //      {t:"analyze", id, version}                     — list the exported functions and their triggers
 //      {t:"invoke", id, version, name, arg, context, timeoutMs}
 //      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
 // Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"done", id, result | error} · {t:"ready"}
 
-const bundles = new Map();   // version -> { url, file, assets: { path: file } }
+const bundles = new Map();   // version -> { url, file, resources: { path: file } }
 const workers = new Map();   // request id -> Worker
 
 const SANDBOX = { read: false, write: false, env: false, run: false, ffi: false, sys: false };
@@ -45,22 +45,22 @@ const secretsOf = (s, fn) => ({
   },
   has: (name) => Object.hasOwn(s, name) && s[name] != null,
 });
-// The deployment's assets folder: read-only files that came with the code (fonts, translations, templates).
-const assetPath = (path) => {
+// The deployment's resources folder: read-only files that came with the code (fonts, translations, templates).
+const resourcePath = (path) => {
   let p = String(path ?? "");
   if (p.startsWith("./")) p = p.slice(2);
   while (p.startsWith("/")) p = p.slice(1);
   return p;
 };
-const assetsOf = (files) => ({
-  read: async (path) => { const f = files[assetPath(path)]; return f ? await Deno.readFile(f) : null; },
-  readText: async (path) => { const f = files[assetPath(path)]; return f ? await Deno.readTextFile(f) : null; },
+const resourcesOf = (files) => ({
+  read: async (path) => { const f = files[resourcePath(path)]; return f ? await Deno.readFile(f) : null; },
+  readText: async (path) => { const f = files[resourcePath(path)]; return f ? await Deno.readTextFile(f) : null; },
   list: async (folder) => {
-    let prefix = assetPath(folder);
+    let prefix = resourcePath(folder);
     while (prefix.endsWith("/")) prefix = prefix.slice(0, -1);
     return Object.keys(files).filter((p) => prefix === "" || p.startsWith(prefix + "/")).sort();
   },
-  has: (path) => Object.hasOwn(files, assetPath(path)),
+  has: (path) => Object.hasOwn(files, resourcePath(path)),
 });
 // The run's raw context: the SDK (functions.ts, bundled with the code) builds ctx.documents, ctx.files and ctx.auth on it.
 const context = (c) => ({
@@ -70,7 +70,7 @@ const context = (c) => ({
   auth: c.auth ?? null,
   console: c.console ?? null,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),
-  assets: assetsOf(c.assets ?? {}),
+  resources: resourcesOf(c.resources ?? {}),
   log: (...a) => console.log(...a),
 });
 self.onmessage = async (m) => {
@@ -85,7 +85,7 @@ self.onmessage = async (m) => {
   }
   try {
     const mod = await import(d.url);
-    if (d.context) d.context.assets = d.assets;
+    if (d.context) d.context.resources = d.resources;
     if (d.t === "analyze") {
       const list = [];
       for (const [name, v] of Object.entries(mod))
@@ -130,8 +130,8 @@ const out = (msg) => Deno.stdout.writeSync(encoder.encode(JSON.stringify(msg) + 
 function start(msg, network) {
   const bundle = bundles.get(msg.version);
   if (!bundle) { out({ t: "done", id: msg.id, error: { code: "unknown-version", message: "Send the code first." } }); return; }
-  // It may read its own bundle and its deployment's assets, and nothing else on the machine.
-  const read = [bundle.file, ...Object.values(bundle.assets)];
+  // It may read its own bundle and its deployment's resources, and nothing else on the machine.
+  const read = [bundle.file, ...Object.values(bundle.resources)];
   const worker = new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, read, net: network, import: network } } });
   workers.set(msg.id, worker);
   const finish = (reply) => {
@@ -150,7 +150,7 @@ function start(msg, network) {
     e.preventDefault();
     finish({ error: { code: "internal", message: e.message ?? "The function crashed.", stack: null } });
   };
-  worker.postMessage({ ...msg, url: bundle.url, assets: bundle.assets });
+  worker.postMessage({ ...msg, url: bundle.url, resources: bundle.resources });
 }
 
 out({ t: "ready" });
@@ -169,7 +169,7 @@ for await (const line of readLines()) {
   if (!line.trim()) continue;
   let msg;
   try { msg = JSON.parse(line); } catch { continue; }
-  if (msg.t === "code") bundles.set(msg.version, { url: msg.url, file: msg.file, assets: msg.assets ?? {} });
+  if (msg.t === "code") bundles.set(msg.version, { url: msg.url, file: msg.file, resources: msg.resources ?? {} });
   else if (msg.t === "analyze") start({ ...msg, timeoutMs: 20000 }, false);
   else if (msg.t === "invoke") start(msg, true);
   else if (msg.t === "reply") workers.get(msg.id)?.postMessage(msg);

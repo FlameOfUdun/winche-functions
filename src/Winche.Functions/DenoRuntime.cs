@@ -70,8 +70,8 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
                 StandardOutputEncoding = Encoding.UTF8, StandardInputEncoding = new UTF8Encoding(false),
             };
-            // Reading: only the bundles and assets folders (each worker gets its own files of them, nothing else).
-            var readable = $"--allow-read={WorkFolder("bundles")},{WorkFolder("assets")}";
+            // Reading: only the bundles and resources folders (each worker gets its own files of them, nothing else).
+            var readable = $"--allow-read={WorkFolder("bundles")},{WorkFolder("resources")}";
             foreach (var a in new[] { "run", "--quiet", "--no-prompt", "--unstable-worker-options", "--allow-net", "--allow-import", readable, script }) info.ArgumentList.Add(a);
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
@@ -160,32 +160,32 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
 
     /// <summary>
     /// Gives the runtime a version's bundle as a file named by its content (so Deno compiles it once and reuses its code
-    /// cache on every run, where a data: URL was compiled again each time) and its assets' files.
+    /// cache on every run, where a data: URL was compiled again each time) and its resources' files.
     /// </summary>
-    private async Task EnsureCodeAsync(string version, string code, Func<Task<IReadOnlyDictionary<string, string>>>? assets, CancellationToken ct)
+    private async Task EnsureCodeAsync(string version, string code, Func<Task<IReadOnlyDictionary<string, string>>>? resources, CancellationToken ct)
     {
         lock (_sent) if (_sent.Contains(version)) return;
-        var file = Path.Combine(WorkFolder("bundles"), WincheFunctions.AssetHash(Encoding.UTF8.GetBytes(code)) + ".js");
+        var file = Path.Combine(WorkFolder("bundles"), WincheFunctions.ContentHash(Encoding.UTF8.GetBytes(code)) + ".js");
         if (!File.Exists(file))
         {
             var temp = file + "." + Guid.NewGuid().ToString("N") + ".part";
             await File.WriteAllTextAsync(temp, code, new UTF8Encoding(false), ct);
             File.Move(temp, file, overwrite: true);
         }
-        var files = assets is null ? new Dictionary<string, string>() : await assets();
+        var files = resources is null ? new Dictionary<string, string>() : await resources();
         await SendAsync(new JsonObject
         {
             ["t"] = "code", ["version"] = version, ["url"] = new Uri(file).AbsoluteUri, ["file"] = file,
-            ["assets"] = new JsonObject(files.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),
+            ["resources"] = new JsonObject(files.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),
         }, ct);
         lock (_sent) { _sent.Add(version); _bundleFiles[version] = file; }
     }
 
     private async Task<JsonObject> RequestAsync(JsonObject msg, string version, string code, Pending pending, CancellationToken ct,
-        Func<Task<IReadOnlyDictionary<string, string>>>? assets = null)
+        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null)
     {
         await EnsureStartedAsync(ct);
-        await EnsureCodeAsync(version, code, assets, ct);
+        await EnsureCodeAsync(version, code, resources, ct);
         var id = Interlocked.Increment(ref _next);
         msg["id"] = id;
         _pending[id] = pending;
@@ -221,7 +221,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
     /// <summary>Runs function <paramref name="name"/>; <paramref name="bridge"/> answers its ctx calls, <paramref name="log"/> gets its output.</summary>
     public async Task<JsonObject> InvokeAsync(string version, string code, string name, JsonNode? arg, JsonObject context, TimeSpan timeout,
         Func<string, JsonObject, Task<JsonNode?>> bridge, Action<string, string> log, CancellationToken ct,
-        Func<Task<IReadOnlyDictionary<string, string>>>? assets = null)
+        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null)
     {
         await _running.WaitAsync(ct);
         try
@@ -230,7 +230,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             {
                 ["t"] = "invoke", ["version"] = version, ["name"] = name, ["arg"] = arg?.DeepClone(), ["context"] = context,
                 ["timeoutMs"] = (long)timeout.TotalMilliseconds,
-            }, version, code, new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), bridge, log), ct, assets);
+            }, version, code, new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), bridge, log), ct, resources);
         }
         finally { _running.Release(); }
     }

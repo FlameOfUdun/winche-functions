@@ -749,18 +749,18 @@ export interface ConsoleUser {
 export type ConsoleRole = "viewer" | "member" | "admin";
 
 /**
- * The files of the functions folder's assets/ folder, deployed with the code (fonts, translations, templates, images).
- * Read-only; paths are relative to assets/ ("fonts/Roboto.ttf"). They change only with a deployment, and rolling back
- * a deployment brings its assets back too.
+ * The files of the functions folder's resources/ folder, deployed with the code (fonts, translations, templates, images).
+ * Read-only; paths are relative to resources/ ("fonts/Roboto.ttf"). They change only with a deployment, and rolling back
+ * a deployment brings its resources back too.
  */
-export interface Assets {
-  /** A file's bytes, or null when there's no such asset. */
+export interface Resources {
+  /** A file's bytes, or null when there's no such resource. */
   read(path: string): Promise<Uint8Array | null>;
   /** A file's contents as UTF-8 text, or null. */
   readText(path: string): Promise<string | null>;
-  /** The asset paths in a folder and its subfolders (all of them without one), sorted. */
+  /** The resource paths in a folder and its subfolders (all of them without one), sorted. */
   list(folder?: string): Promise<string[]>;
-  /** Whether there's an asset at that path. */
+  /** Whether there's an resource at that path. */
   has(path: string): boolean;
 }
 
@@ -775,8 +775,8 @@ export interface Context {
   files: Files;
   /** Users' accounts. */
   auth: Auth;
-  /** The deployment's assets/ folder (read-only). */
-  assets: Assets;
+  /** The deployment's resources/ folder (read-only). */
+  resources: Resources;
   /** The secrets this function declared in its options. */
   secrets: Secrets;
   /** For console actions: who ran it from the console (null otherwise). */
@@ -793,7 +793,7 @@ interface RawContext {
   auth: Caller | null;
   console: { user: ConsoleUser } | null;
   secrets: Secrets;
-  assets: Assets;
+  resources: Resources;
   log(...args: unknown[]): void;
 }
 
@@ -806,7 +806,7 @@ export function contextOf(raw: RawContext): Context {
       `ctx: ${op} can't change anything in a before-function: it would run outside the write being checked. Use an onCreated… trigger.`)))
     : raw.call;
   return {
-    functionName: raw.functionName, caller: raw.auth ?? null, console: raw.console ?? null, secrets: raw.secrets, assets: raw.assets, log: raw.log,
+    functionName: raw.functionName, caller: raw.auth ?? null, console: raw.console ?? null, secrets: raw.secrets, resources: raw.resources, log: raw.log,
     documents: new Documents(call), files: new Files(call), auth: new Auth(call),
   };
 }

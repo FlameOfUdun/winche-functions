@@ -35,15 +35,15 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
               last_due timestamptz NOT NULL
             );
         """,
-        // Assets (ctx.assets): each content stored once by its hash; a deployment lists its paths and hashes.
+        // Resources (ctx.resources): each content stored once by its hash; a deployment lists its paths and hashes.
         """
-            CREATE TABLE IF NOT EXISTS winche_function_assets (
+            CREATE TABLE IF NOT EXISTS winche_function_resources (
               hash text PRIMARY KEY,
               size bigint NOT NULL,
               content bytea NOT NULL,
               added_at timestamptz NOT NULL DEFAULT now()
             );
-            ALTER TABLE winche_function_deployments ADD COLUMN IF NOT EXISTS assets jsonb NOT NULL DEFAULT '{}'::jsonb;
+            ALTER TABLE winche_function_deployments ADD COLUMN IF NOT EXISTS resources jsonb NOT NULL DEFAULT '{}'::jsonb;
         """,
     ];
 
@@ -64,7 +64,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     public async Task<Deployment?> GetAsync(int version, CancellationToken ct = default)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("SELECT version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, assets FROM winche_function_deployments WHERE version = $1");
+        await using var cmd = db.CreateCommand("SELECT version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources FROM winche_function_deployments WHERE version = $1");
         cmd.Parameters.AddWithValue(version);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? Read(r, withCode: true) : null;
@@ -74,7 +74,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     public async Task<IReadOnlyList<Deployment>> ListAsync(int limit = 50, CancellationToken ct = default)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("SELECT version, '{}'::jsonb, '', functions, note, deployed_by, deployed_at, rolled_back_from, assets FROM winche_function_deployments ORDER BY version DESC LIMIT $1");
+        await using var cmd = db.CreateCommand("SELECT version, '{}'::jsonb, '', functions, note, deployed_by, deployed_at, rolled_back_from, resources FROM winche_function_deployments ORDER BY version DESC LIMIT $1");
         cmd.Parameters.AddWithValue(limit);
         var list = new List<Deployment>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -83,13 +83,13 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     }
 
     internal async Task<Deployment> AddAsync(IReadOnlyDictionary<string, string> files, string bundle, IReadOnlyList<FunctionInfo> functions, string? note, string? by, int? from,
-        IReadOnlyDictionary<string, AssetEntry> assets, CancellationToken ct)
+        IReadOnlyDictionary<string, ResourceEntry> resources, CancellationToken ct)
     {
         await InitializeAsync(ct);
         await using var cmd = db.CreateCommand("""
-            INSERT INTO winche_function_deployments (version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, assets)
+            INSERT INTO winche_function_deployments (version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources)
             SELECT coalesce(max(version), 0) + 1, $1, $2, $3, $4, $5, now(), $6, $7 FROM winche_function_deployments
-            RETURNING version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, assets
+            RETURNING version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources
             """);
         cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(files, Json));
         cmd.Parameters.AddWithValue(bundle);
@@ -97,7 +97,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         cmd.Parameters.AddWithValue((object?)note ?? DBNull.Value);
         cmd.Parameters.AddWithValue((object?)by ?? DBNull.Value);
         cmd.Parameters.AddWithValue((object?)from ?? DBNull.Value);
-        cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(assets, Json));
+        cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(resources, Json));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         await r.ReadAsync(ct);
         return Read(r, withCode: true);
@@ -109,16 +109,16 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         r.GetString(2),
         JsonSerializer.Deserialize<List<FunctionInfo>>(r.GetString(3), Json)!,
         r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.GetFieldValue<DateTimeOffset>(6), r.IsDBNull(7) ? null : r.GetInt32(7),
-        JsonSerializer.Deserialize<Dictionary<string, AssetEntry>>(r.GetString(8), Json)!);
+        JsonSerializer.Deserialize<Dictionary<string, ResourceEntry>>(r.GetString(8), Json)!);
 
-    // ── assets ────────────────────────────────────────────────────────────────
+    // ── resources ────────────────────────────────────────────────────────────────
 
     /// <summary>Which of <paramref name="hashes"/> aren't stored yet.</summary>
-    public async Task<IReadOnlyList<string>> MissingAssetsAsync(IReadOnlyCollection<string> hashes, CancellationToken ct = default)
+    public async Task<IReadOnlyList<string>> MissingResourcesAsync(IReadOnlyCollection<string> hashes, CancellationToken ct = default)
     {
         await InitializeAsync(ct);
         if (hashes.Count == 0) return [];
-        await using var cmd = db.CreateCommand("SELECT hash FROM winche_function_assets WHERE hash = ANY($1)");
+        await using var cmd = db.CreateCommand("SELECT hash FROM winche_function_resources WHERE hash = ANY($1)");
         cmd.Parameters.AddWithValue(hashes.Distinct().ToArray());
         var found = new HashSet<string>(StringComparer.Ordinal);
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -126,22 +126,22 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         return [.. hashes.Distinct().Where(h => !found.Contains(h))];
     }
 
-    /// <summary>Stores an asset's content under its hash (once; storing it again changes nothing).</summary>
-    internal async Task PutAssetAsync(string hash, byte[] content, CancellationToken ct)
+    /// <summary>Stores an resource's content under its hash (once; storing it again changes nothing).</summary>
+    internal async Task PutResourceAsync(string hash, byte[] content, CancellationToken ct)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("INSERT INTO winche_function_assets (hash, size, content) VALUES ($1, $2, $3) ON CONFLICT (hash) DO NOTHING");
+        await using var cmd = db.CreateCommand("INSERT INTO winche_function_resources (hash, size, content) VALUES ($1, $2, $3) ON CONFLICT (hash) DO NOTHING");
         cmd.Parameters.AddWithValue(hash);
         cmd.Parameters.AddWithValue((long)content.Length);
         cmd.Parameters.AddWithValue(content);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>An asset's content, or null.</summary>
-    internal async Task<byte[]?> AssetAsync(string hash, CancellationToken ct)
+    /// <summary>An resource's content, or null.</summary>
+    internal async Task<byte[]?> ResourceAsync(string hash, CancellationToken ct)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("SELECT content FROM winche_function_assets WHERE hash = $1");
+        await using var cmd = db.CreateCommand("SELECT content FROM winche_function_resources WHERE hash = $1");
         cmd.Parameters.AddWithValue(hash);
         return await cmd.ExecuteScalarAsync(ct) as byte[];
     }

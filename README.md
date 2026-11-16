@@ -77,7 +77,7 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
 - **Sandbox**: each run is a fresh worker with network access only. It can read its own bundle and its deployment's
-  assets, nothing else on the machine. The bundle is kept as a file named by its content, so Deno compiles it once per
+  resources, nothing else on the machine. The bundle is kept as a file named by its content, so Deno compiles it once per
   server and every later run starts from its code cache: a large bundle (a PDF library) costs milliseconds per run,
   not the time to compile it again.
 
@@ -195,6 +195,24 @@ export const promote = callable(async (data: { uid: string }, ctx) => {
   4 deep, the database's `ExpandLimit` (default 100) per call at most.
 - **Trigger events** carry the same snapshots: a document event's `data` and `before` (`exists` false when created or
   deleted), a file event's `file`, a user event's `user`.
+
+## Resources
+
+The functions folder's `resources/` folder is deployed with the code: files the code needs, such as fonts, templates
+and translations it renders with. Functions read them with `ctx.resources`:
+
+```ts
+const de = JSON.parse((await ctx.resources.readText("translations/de.json"))!);
+const font = await ctx.resources.read("fonts/Roboto-400.ttf");      // Uint8Array, or null when there's none
+const all = await ctx.resources.list("translations");                // ["translations/de.json", …]
+```
+
+- Read-only, and part of the deployment: they change only when it does, and rolling back brings the old ones back.
+- `winche functions deploy` sends each file's SHA-256 first and uploads only contents the server doesn't have, so a
+  large font goes up once, not on every deploy. Contents are kept once, in the project's database, however many
+  versions use them. Up to 2000 resources, 64 MB each.
+- Files under `resources/` aren't code: import JSON your code needs from elsewhere in the folder.
+- In the emulators, saving a file under `resources/` deploys again, as code does.
 
 ## Secrets
 
