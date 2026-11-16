@@ -28,8 +28,17 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
 /// <param name="MinRole">Console actions and pages: the lowest console role that may run or see it (viewer, member, admin).</param>
 /// <param name="Page">Console pages: what the console shows.</param>
 /// <param name="CodeTimeoutSeconds">The run time its code sets (options.timeoutSeconds), if it does.</param>
+/// <param name="About">What it does, in a sentence (options.description).</param>
+/// <param name="Input">The shape of what it takes, as JSON Schema (options.input): shown, not checked.</param>
+/// <param name="Output">The shape of what it returns, as JSON Schema (options.output): shown, not checked.</param>
+/// <param name="Example">A sample input (options.example); without one, made from <see cref="Input"/> (<see cref="ExampleInput"/>).</param>
 public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null,
-    string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null);
+    string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null,
+    string? About = null, JsonNode? Input = null, JsonNode? Output = null, JsonNode? Example = null)
+{
+    /// <summary>The input to start from when running it by hand: its example, else one made from its input schema.</summary>
+    public JsonNode? ExampleInput => Example?.DeepClone() ?? (Input is JsonObject schema ? SchemaExample.Of(schema) : null);
+}
 
 /// <summary>A console page: its sidebar title and icon, and the folder of its files in the deployment.</summary>
 public sealed record ConsolePageInfo(string Title, string Files, string? Icon, int Order);

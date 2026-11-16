@@ -214,7 +214,23 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 }
             }
             var codeTimeout = node["options"]?["timeoutSeconds"]?.GetValue<double>() is { } cs ? (int)Math.Ceiling(cs) : (int?)null;
-            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout));
+            // What it's for and the shapes it takes and returns: shown in the console, never checked.
+            string? about = null;
+            if (node["options"]?["description"] is { } d)
+            {
+                if (d.GetValueKind() != JsonValueKind.String || d.GetValue<string>().Trim() is not { Length: > 0 and <= 300 } text)
+                    problems.Add($"{name}: description is a sentence of up to 300 characters.");
+                else about = text;
+            }
+            static JsonNode? Shape(JsonNode node, string name, string key, bool schema, List<string> problems)
+            {
+                if (node["options"]?[key] is not { } value) return null;
+                if (schema && value is not JsonObject) { problems.Add($"{name}: {key} is a JSON Schema object, e.g. {{ type: \"object\", properties: {{ … }} }}."); return null; }
+                if (value.ToJsonString().Length > 16_384) { problems.Add($"{name}: {key} is at most 16 KB."); return null; }
+                return value.DeepClone();
+            }
+            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout,
+                about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems)));
         }
         return list;
     }

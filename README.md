@@ -239,6 +239,20 @@ export const announce = assets.onReleased(async (e, ctx) => {
 `ctx.assets.release(n)`, `channels()` and `releases()` list the rest. A file is read whole, up to 32 MB; larger ones
 through `downloadUrl()`.
 
+## Describing a function
+
+Options say what a function does and what it takes and returns. The console shows them, and starts a run by hand from
+`example`, or from an input made from the `input` schema. They're documentation: nothing is checked.
+
+```ts
+export const strings = callable(async (data: { lang: string }, ctx) => …, {
+  description: "A language's strings from the production assets.",                 // up to 300 characters
+  input: { type: "object", properties: { lang: { enum: ["en", "de"] } }, required: ["lang"] },   // JSON Schema
+  output: { type: "object", additionalProperties: { type: "string" } },
+  example: { lang: "de" },                                                             // optional: else made from input
+});
+```
+
 ## Secrets
 
 API keys and passwords a function needs (an email service's key, another service's client secret) are **secrets**: set

@@ -1053,7 +1053,21 @@ export interface FunctionOptions {
   timeoutSeconds?: number;
   /** The secrets it reads with ctx.secrets.get: names in capitals, digits and underscores (e.g. "SES_SECRET_KEY"). */
   secrets?: string[];
+  /** What it does, in a sentence (up to 300 characters): shown in the console. */
+  description?: string;
+  /**
+   * The shape of what it takes, as JSON Schema: shown in the console, which starts a run by hand from an input made
+   * from it (unless `example` is given). Not checked: the function checks its own input.
+   */
+  input?: JsonSchema;
+  /** The shape of what it returns, as JSON Schema: shown in the console. Not checked. */
+  output?: JsonSchema;
+  /** A sample input, to start a run by hand from (instead of one made from `input`). */
+  example?: Json;
 }
+
+/** A JSON Schema, e.g. { type: "object", properties: { lang: { enum: ["en", "de"] } }, required: ["lang"] }. */
+export type JsonSchema = { [keyword: string]: Json };
 
 export interface BeforeOptions {
   /** Default 5, at most 30: the write (and its locks) waits for it. */
