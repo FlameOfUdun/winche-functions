@@ -31,7 +31,7 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 | --- | --- |
 | `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`), console pages and actions. Deployed through the console (`winche functions deploy`, as you or a CI token). |
 | `Winche.Functions.Database` | `ctx.db`: get, set, update, delete (recursive too), query — with the server's rights; `get` and `query` take `expand`. |
-| `Winche.Functions.Storage` | `ctx.files`: list, delete, deleteUnder. |
+| `Winche.Functions.Storage` | `ctx.files`: list, get, read / readText, write, downloadUrl, delete, deleteUnder. |
 | `Winche.Functions.Auth` | `ctx.users`: get, setClaims (Winche Auth). |
 
 ## Install
@@ -71,6 +71,25 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Logs**: `console.log` and `ctx.log` go to the server's logs (category `Winche.Functions`), with each run's
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
+
+## Files
+
+`ctx.files` reads and writes the project's files with the server's rights:
+
+```ts
+export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
+  const pdf = await makePdf(await ctx.db.query("visits"));                       // a Uint8Array
+  await ctx.files.write("reports/weekly.pdf", pdf, { mimeType: "application/pdf", contentDisposition: 'attachment; filename="weekly.pdf"' });
+  const { url, expiresAt } = await ctx.files.downloadUrl("reports/weekly.pdf"); // a link to send on
+});
+```
+
+- `read(path)` gives the bytes (`Uint8Array`), `readText(path)` UTF-8 text, `get(path)` the record (size, type,
+  metadata); each is null when there's no file. `write(path, data, { mimeType, metadata, contentDisposition,
+  cacheControl })` takes bytes or text, new or replacing a file, and returns its record.
+- Up to 32 MB per read or write. A write is an upload like any other: `files.onUploaded` triggers and webhooks run.
+- `downloadUrl(path)` lasts as long as the storage's links do (S3: its presigned link lifetime).
+- Before-functions can `get` and `read`, not `write` or make links.
 
 ## Secrets
 

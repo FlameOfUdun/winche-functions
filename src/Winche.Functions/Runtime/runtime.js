@@ -34,6 +34,13 @@ const encode = (v) => v instanceof Date ? { $timestamp: v.toISOString() }
   : Array.isArray(v) ? v.map(encode)
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encode(x)]))
   : v;
+// File contents cross to the server as base64.
+const toBase64 = (bytes) => {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 // In before-functions ctx.* only reads: a write there would run outside the write being checked.
 const readOnly = (what) => () => Promise.reject(Object.assign(
   new Error(what + " can't change anything in a before-function: it would run outside the write being checked. Use an onCreated… trigger."),
@@ -42,7 +49,7 @@ const context = (c) => c.readOnly ? lock(full(c)) : full(c);
 const lock = (ctx) => ({
   ...ctx,
   db: { ...ctx.db, set: readOnly("ctx.db.set"), update: readOnly("ctx.db.update"), delete: readOnly("ctx.db.delete") },
-  files: { ...ctx.files, delete: readOnly("ctx.files.delete"), deleteUnder: readOnly("ctx.files.deleteUnder") },
+  files: { ...ctx.files, write: readOnly("ctx.files.write"), downloadUrl: readOnly("ctx.files.downloadUrl"), delete: readOnly("ctx.files.delete"), deleteUnder: readOnly("ctx.files.deleteUnder") },
   users: { ...ctx.users, setClaims: readOnly("ctx.users.setClaims") },
 });
 // Secrets the function declared (options.secrets), read from the console's encrypted store for this run.
@@ -69,6 +76,15 @@ const full = (c) => ({
   },
   files: {
     list: (folder) => call("files.list", { folder }),
+    get: (path) => call("files.get", { path }),
+    read: async (path) => { const r = await call("files.read", { path }); return r === null ? null : fromBase64(r.base64); },
+    readText: async (path) => { const r = await call("files.read", { path }); return r === null ? null : new TextDecoder().decode(fromBase64(r.base64)); },
+    write: (path, data, o) => call("files.write", {
+      path, base64: toBase64(typeof data === "string" ? new TextEncoder().encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data)),
+      mimeType: o?.mimeType ?? (typeof data === "string" ? "text/plain; charset=utf-8" : null), metadata: o?.metadata ?? null,
+      contentDisposition: o?.contentDisposition ?? null, cacheControl: o?.cacheControl ?? null,
+    }),
+    downloadUrl: (path) => call("files.downloadUrl", { path }),
     delete: (path) => call("files.delete", { path }),
     deleteUnder: (folder) => call("files.deleteUnder", { folder }),
   },

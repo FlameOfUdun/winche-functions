@@ -8,7 +8,7 @@ namespace Winche.Functions.Storage;
 public static class StorageFunctionsExtensions
 {
     /// <summary>
-    /// Gives functions <c>ctx.files</c> (list and delete files with the server's rights), and runs <c>files.beforeWrite</c>
+    /// Gives functions <c>ctx.files</c> (list, get, read, write, download links and delete, with the server's rights), and runs <c>files.beforeWrite</c>
     /// functions before matching file writes are saved.
     /// </summary>
     public static IServiceCollection AddWincheFunctionsForStorage(this IServiceCollection services)
@@ -57,17 +57,58 @@ internal sealed class StorageBinding : IFunctionBinding
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     public string Name => "files";
 
+    /// <summary>The most a function reads or writes in one call (the bytes cross to Deno as base64).</summary>
+    public const long MaxBytes = 32L << 20;
+
     public async Task<JsonNode?> CallAsync(string op, JsonObject args, IServiceProvider services, CancellationToken ct)
     {
         var files = services.GetRequiredService<FileStorage>();
         string Arg(string name) => args[name]?.GetValue<string>() is { Length: > 0 } v ? v : throw new FunctionCallException("invalid-argument", $"Give {name}.");
-        return op switch
+        string? Text(string name) => args[name]?.GetValueKind() == JsonValueKind.String ? args[name]!.GetValue<string>() : null;
+        try
         {
-            "list" => JsonSerializer.SerializeToNode(await ListAllAsync(files, Arg("folder").Trim('/'), ct), Json),
-            "delete" => await files.DeleteAsync(Arg("path").TrimStart('/'), ct: ct),
-            "deleteUnder" => await files.DeleteUnderAsync(Arg("folder").TrimStart('/') is var f && f.EndsWith('/') ? f : f + "/", ct),
-            _ => throw new FunctionCallException("invalid-argument", $"ctx.files.{op} isn't a thing."),
-        };
+            return op switch
+            {
+                "list" => JsonSerializer.SerializeToNode(await ListAllAsync(files, Arg("folder").Trim('/'), ct), Json),
+                "get" => await files.GetAsync(Arg("path").TrimStart('/'), ct) is { } record ? JsonSerializer.SerializeToNode(record, Json) : null,
+                "read" => await ReadAsync(files, Arg("path").TrimStart('/'), ct),
+                "write" => await WriteAsync(files, Arg("path").TrimStart('/'), args["base64"]?.GetValue<string>() ?? "", Text("mimeType"),
+                    args["metadata"] as JsonObject, new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct),
+                "downloadUrl" => await files.GenerateDownloadUrlAsync(Arg("path").TrimStart('/'), ct) is var link
+                    ? new JsonObject { ["url"] = link.Url, ["expiresAt"] = link.ExpiresAt } : null,
+                "delete" => await files.DeleteAsync(Arg("path").TrimStart('/'), ct: ct),
+                "deleteUnder" => await files.DeleteUnderAsync(Arg("folder").TrimStart('/') is var f && f.EndsWith('/') ? f : f + "/", ct),
+                _ => throw new FunctionCallException("invalid-argument", $"ctx.files.{op} isn't a thing."),
+            };
+        }
+        catch (Winche.Storage.Models.FileRecordNotFoundException) { throw new FunctionCallException("not-found", $"There's no file {Arg("path")}."); }
+        catch (Winche.Storage.Models.InvalidUploadStatusException) { throw new FunctionCallException("failed-precondition", $"{Arg("path")} hasn't finished uploading."); }
+        catch (NotSupportedException ex) { throw new FunctionCallException("unimplemented", ex.Message); }
+        catch (ArgumentException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
+    }
+
+    private static async Task<JsonNode?> ReadAsync(FileStorage files, string path, CancellationToken ct)
+    {
+        var record = await files.GetAsync(path, ct);
+        if (record is null) return null;
+        if (record.SizeBytes > MaxBytes) throw new FunctionCallException("out-of-range", $"{path} is {record.SizeBytes} bytes: functions read up to {MaxBytes >> 20} MB at a time.");
+        await using var stream = await files.OpenReadAsync(path, ct);
+        if (stream is null) throw new FunctionCallException("failed-precondition", $"{path} hasn't finished uploading.");
+        using var copy = new MemoryStream();
+        await stream.CopyToAsync(copy, ct);
+        return new JsonObject { ["base64"] = Convert.ToBase64String(copy.GetBuffer(), 0, (int)copy.Length), ["mimeType"] = record.MimeType };
+    }
+
+    private static async Task<JsonNode?> WriteAsync(FileStorage files, string path, string base64, string? mimeType, JsonObject? metadata,
+        Winche.Storage.Models.FileHeaders headers, CancellationToken ct)
+    {
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(base64); }
+        catch (FormatException) { throw new FunctionCallException("invalid-argument", "The file's content didn't arrive whole."); }
+        if (bytes.Length > MaxBytes) throw new FunctionCallException("out-of-range", $"Functions write up to {MaxBytes >> 20} MB at a time.");
+        var record = await files.WriteAsync(path, new MemoryStream(bytes), string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType,
+            bytes.Length, metadata?.DeepClone() as JsonObject, headers, ct);
+        return JsonSerializer.SerializeToNode(record, Json);
     }
 
     /// <summary>Every file directly in <paramref name="folder"/>, across pages.</summary>

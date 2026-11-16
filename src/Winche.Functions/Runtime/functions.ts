@@ -166,9 +166,28 @@ export interface Db {
   query(collection: string, query?: { where?: Where[]; orderBy?: [field: string, direction?: "asc" | "desc"][]; limit?: number; expand?: string[] }): Promise<DocumentData[]>;
 }
 
+export interface WriteFileOptions {
+  /** Default: text/plain for text, application/octet-stream for bytes. */
+  mimeType?: string;
+  metadata?: { [key: string]: Json };
+  /** What browsers do with it when downloaded, e.g. 'attachment; filename="report.pdf"'. */
+  contentDisposition?: string;
+  cacheControl?: string;
+}
+
 export interface Files {
   /** The files directly in a folder. */
   list(folder: string): Promise<FileRecord[]>;
+  /** A file's record (size, type, metadata), or null. */
+  get(path: string): Promise<FileRecord | null>;
+  /** A file's bytes (up to 32 MB), or null when there's no file there. */
+  read(path: string): Promise<Uint8Array | null>;
+  /** A file's contents as UTF-8 text, or null. */
+  readText(path: string): Promise<string | null>;
+  /** Writes a file (new or replacing one), up to 32 MB: its triggers and hooks run as for an upload. */
+  write(path: string, data: Uint8Array | ArrayBuffer | string, options?: WriteFileOptions): Promise<FileRecord>;
+  /** A link anyone holding it can download the file with, until expiresAt (the storage's link lifetime). */
+  downloadUrl(path: string): Promise<{ url: string; expiresAt: string }>;
   delete(path: string): Promise<boolean>;
   /** Deletes every file whose path starts with the folder. */
   deleteUnder(folder: string): Promise<number>;

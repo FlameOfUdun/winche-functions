@@ -47,11 +47,20 @@ public static class Deno
     public static string? Path => Environment.GetEnvironmentVariable("WINCHE_DENO") is { Length: > 0 } p ? p : null;
 }
 
-internal sealed class MemoryArchive : IArchive
+internal sealed class MemoryArchive : IArchive, Winche.Storage.Locations.IArchiveContent
 {
+    public ConcurrentDictionary<string, byte[]> Bytes { get; } = new();
+    public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) => Task.FromResult<Stream?>(Bytes.TryGetValue(path, out var b) ? new MemoryStream(b) : null);
+    public async Task WriteAsync(string path, Stream content, string? contentType, CancellationToken ct = default)
+    {
+        using var copy = new MemoryStream();
+        await content.CopyToAsync(copy, ct);
+        Bytes[path] = copy.ToArray();
+        Objects[path] = copy.Length;
+    }
     public ConcurrentDictionary<string, long> Objects { get; } = new();   // path → size
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default) => Task.FromResult(new UploadSession { Url = $"mem://{path}" });
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default) => Task.FromResult(new DownloadSession { Url = $"mem://{path}", ExpiresAt = default });
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default) => Task.FromResult(new DownloadSession { Url = $"mem://{path}?type={headers?.ContentType}", ExpiresAt = new DateTime(2030, 1, 1, 0, 0, 0, DateTimeKind.Utc) });
     public Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default) => Task.FromResult(Objects.TryGetValue(path, out var o) ? new ArchiveObjectInfo(o, "\"e\"") : (ArchiveObjectInfo?)null);
     public Task DeleteAsync(string path, CancellationToken ct = default) { Objects.TryRemove(path, out _); return Task.CompletedTask; }
     public Task DeleteObjectsAsync(IEnumerable<string> paths, CancellationToken ct = default) { foreach (var p in paths) Objects.TryRemove(p, out _); return Task.CompletedTask; }
