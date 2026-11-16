@@ -56,9 +56,53 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         finally { _refresh.Release(); }
     }
 
-    /// <summary>Bundles and checks <paramref name="files"/>, then makes them the deployment in force.</summary>
-    public async Task<Deployment> DeployAsync(IReadOnlyDictionary<string, string> files, string? note, string? by, CancellationToken ct = default, int? rolledBackFrom = null)
+    /// <summary>The most assets a deployment may have, and the largest one (bytes).</summary>
+    public const int MaxAssets = 2000;
+    public const long MaxAssetBytes = 64L * 1024 * 1024;
+
+    /// <summary>The content hash assets go by: SHA-256, lowercase hex.</summary>
+    public static string AssetHash(ReadOnlySpan<byte> content) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(content));
+
+    /// <summary>Which of these asset hashes the server doesn't have yet (the CLI sends only those).</summary>
+    public Task<IReadOnlyList<string>> MissingAssetsAsync(IReadOnlyCollection<string> hashes, CancellationToken ct = default) => store.MissingAssetsAsync(hashes, ct);
+
+    /// <summary>Stores an asset's content; returns its hash. <paramref name="expectedHash"/>, when given, must match.</summary>
+    public async Task<string> PutAssetAsync(byte[] content, string? expectedHash, CancellationToken ct = default)
     {
+        if (content.LongLength > MaxAssetBytes) throw new FunctionDeployException($"An asset is at most {MaxAssetBytes / 1024 / 1024} MB.", []);
+        var hash = AssetHash(content);
+        if (expectedHash is not null && !string.Equals(expectedHash, hash, StringComparison.OrdinalIgnoreCase))
+            throw new FunctionDeployException("The asset's content doesn't match its hash (sent incompletely?).", []);
+        await store.PutAssetAsync(hash, content, ct);
+        return hash;
+    }
+
+    /// <summary>What's wrong with an asset list: paths as for files, known hashes, sizes.</summary>
+    public static IReadOnlyList<string> AssetProblems(IReadOnlyDictionary<string, AssetEntry> assets)
+    {
+        var problems = new List<string>();
+        if (assets.Count > MaxAssets) problems.Add($"There are more than {MaxAssets} assets.");
+        foreach (var (path, a) in assets)
+        {
+            if (path.Length > 300 || path.StartsWith('/') || path.Contains('\\') || path.Split('/').Any(p => p is "" or "." or ".."))
+                problems.Add($"assets/{path} isn't a usable file name (relative, with / between folders).");
+            if (a.Hash.Length != 64 || !a.Hash.All(char.IsAsciiHexDigitLower)) problems.Add($"assets/{path}: the hash is SHA-256 in lowercase hex.");
+            if (a.Size < 0 || a.Size > MaxAssetBytes) problems.Add($"assets/{path} is larger than {MaxAssetBytes / 1024 / 1024} MB.");
+        }
+        return problems;
+    }
+
+    /// <summary>
+    /// Bundles and checks <paramref name="files"/>, then makes them the deployment in force, with <paramref name="assets"/>
+    /// (stored beforehand with <see cref="PutAssetAsync"/>) as its ctx.assets.
+    /// </summary>
+    public async Task<Deployment> DeployAsync(IReadOnlyDictionary<string, string> files, string? note, string? by, CancellationToken ct = default, int? rolledBackFrom = null,
+        IReadOnlyDictionary<string, AssetEntry>? assets = null)
+    {
+        assets ??= new Dictionary<string, AssetEntry>();
+        if (AssetProblems(assets) is { Count: > 0 } bad) throw new FunctionDeployException("These assets can't be deployed.", bad);
+        if (await store.MissingAssetsAsync([.. assets.Values.Select(a => a.Hash)], ct) is { Count: > 0 } missing)
+            throw new FunctionDeployException("Some assets haven't been sent.", [.. assets.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"assets/{a.Key}").Take(20)]);
         var bundle = await bundler.BundleAsync(files, ct);
         var check = $"check-{Guid.NewGuid():N}";
         JsonArray found;
@@ -66,7 +110,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         finally { await runtime.ForgetAsync(check, CancellationToken.None); }
         var functions = Read(found, files, out var problems);
         if (problems.Count > 0) throw new FunctionDeployException("These functions can't be deployed.", problems);
-        var deployment = await store.AddAsync(files, bundle, functions, note, by, rolledBackFrom, ct);
+        var deployment = await store.AddAsync(files, bundle, functions, note, by, rolledBackFrom, assets, ct);
         _log.LogInformation("Functions version {Version} deployed by {By}: {Functions}.", deployment.Version, by ?? "someone",
             functions.Count == 0 ? "no functions" : string.Join(", ", functions.Select(f => f.Name)));
         await RefreshAsync(ct);
@@ -77,7 +121,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     public async Task<Deployment> RollBackAsync(int version, string? note, string? by, CancellationToken ct = default)
     {
         var old = await store.GetAsync(version, ct) ?? throw new FunctionDeployException($"There's no version {version}.", []);
-        return await DeployAsync(old.Files, note ?? $"Back to version {version}", by, ct, version);
+        return await DeployAsync(old.Files, note ?? $"Back to version {version}", by, ct, version, old.AssetFiles);
     }
 
     private IReadOnlyList<FunctionInfo> Read(JsonArray found, IReadOnlyDictionary<string, string> files, out List<string> problems)
@@ -199,6 +243,29 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             console: new JsonObject { ["user"] = new JsonObject { ["email"] = email, ["role"] = role } });
     }
 
+    /// <summary>
+    /// A deployment's assets as files on this machine (path → file), written from the database the first time they're
+    /// needed. Each content is one file named by its hash, so versions share them.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> AssetFilesAsync(Deployment d, CancellationToken ct)
+    {
+        var dir = DenoRuntime.WorkFolder("assets");
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (path, a) in d.AssetFiles)
+        {
+            var file = Path.Combine(dir, a.Hash);
+            if (!File.Exists(file))
+            {
+                var content = await store.AssetAsync(a.Hash, ct) ?? throw new FunctionsUnavailableException($"The asset assets/{path} is missing from the database.");
+                var temp = file + "." + Guid.NewGuid().ToString("N") + ".part";
+                await File.WriteAllBytesAsync(temp, content, ct);
+                File.Move(temp, file, overwrite: true);
+            }
+            map[path] = file;
+        }
+        return map;
+    }
+
     private async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
     {
         if (_current is null) await RefreshAsync(ct);
@@ -238,7 +305,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         };
         var watch = Stopwatch.StartNew();
         JsonObject done;
-        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(TimeoutFor(fn)), Bridge, Log, ct); }
+        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(TimeoutFor(fn)), Bridge, Log, ct,
+                () => AssetFilesAsync(d, ct)); }
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
         if (done["error"] is JsonObject e)

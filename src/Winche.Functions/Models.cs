@@ -34,8 +34,15 @@ public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int Time
 public sealed record ConsolePageInfo(string Title, string Files, string? Icon, int Order);
 
 /// <summary>A deployed version: its source files, the bundle that runs, and the functions found in it.</summary>
+/// <param name="Assets">The files of its assets folder (ctx.assets), by path: each one's content hash and size.</param>
 public sealed record Deployment(int Version, IReadOnlyDictionary<string, string> Files, string Bundle, IReadOnlyList<FunctionInfo> Functions,
-    string? Note, string? By, DateTimeOffset At, int? RolledBackFrom);
+    string? Note, string? By, DateTimeOffset At, int? RolledBackFrom, IReadOnlyDictionary<string, AssetEntry>? Assets = null)
+{
+    public IReadOnlyDictionary<string, AssetEntry> AssetFiles => Assets ?? new Dictionary<string, AssetEntry>();
+}
+
+/// <summary>An asset of a deployment: its content's SHA-256 (lowercase hex) and its size in bytes.</summary>
+public sealed record AssetEntry(string Hash, long Size);
 
 /// <summary>A deployment that couldn't be made, and why (bundling errors, problems with triggers).</summary>
 public sealed class FunctionDeployException(string message, IReadOnlyList<string> problems) : Exception(message)

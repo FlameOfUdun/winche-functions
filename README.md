@@ -76,6 +76,10 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Logs**: `console.log` and `ctx.log` go to the server's logs (category `Winche.Functions`), with each run's
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
+- **Sandbox**: each run is a fresh worker with network access only. It can read its own bundle and its deployment's
+  assets, nothing else on the machine. The bundle is kept as a file named by its content, so Deno compiles it once per
+  server and every later run starts from its code cache: a large bundle (a PDF library) costs milliseconds per run,
+  not the time to compile it again.
 
 ## HTTP functions
 
@@ -128,6 +132,25 @@ export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
 - Up to 32 MB per read or write. A write is an upload like any other: `files.onUploaded` triggers and webhooks run.
 - `downloadUrl(path)` lasts as long as the storage's links do (S3: its presigned link lifetime).
 - Before-functions can `get` and `read`, not `write` or make links.
+
+## Assets
+
+The functions folder's `assets/` folder is deployed with the code: fonts, translations, templates, images, HTML
+pages, any files. Functions read them with `ctx.assets`:
+
+```ts
+const de = JSON.parse((await ctx.assets.readText("translations/de.json"))!);
+const font = await ctx.assets.read("fonts/Roboto-400.ttf");          // Uint8Array, or null when there's none
+const all = await ctx.assets.list("translations");                    // ["translations/de.json", …]
+if (ctx.assets.has("demos/intro.html")) return new Response(await ctx.assets.readText("demos/intro.html"), { headers: { "content-type": "text/html" } });
+```
+
+- Read-only, and part of the deployment: they change only when it does, and rolling back brings the old ones back.
+- `winche functions deploy` sends each file's SHA-256 first and uploads only contents the server doesn't have, so a
+  large font goes up once, not on every deploy. Contents are kept once, in the project's database, however many
+  versions use them. Up to 2000 assets, 64 MB each.
+- Files under `assets/` aren't code: import JSON your code needs from elsewhere in the folder.
+- In the emulators, saving a file under `assets/` deploys again, as code does.
 
 ## Secrets
 

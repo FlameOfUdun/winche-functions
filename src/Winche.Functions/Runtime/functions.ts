@@ -242,9 +242,27 @@ export interface ConsoleUser {
 
 export type ConsoleRole = "viewer" | "member" | "admin";
 
+/**
+ * The files of the functions folder's assets/ folder, deployed with the code (fonts, translations, templates, images).
+ * Read-only; paths are relative to assets/ ("fonts/Roboto.ttf"). They change only with a deployment, and rolling back
+ * a deployment brings its assets back too.
+ */
+export interface Assets {
+  /** A file's bytes, or null when there's no such asset. */
+  read(path: string): Promise<Uint8Array | null>;
+  /** A file's contents as UTF-8 text, or null. */
+  readText(path: string): Promise<string | null>;
+  /** The asset paths in a folder and its subfolders (all of them without one), sorted. */
+  list(folder?: string): Promise<string[]>;
+  /** Whether there's an asset at that path. */
+  has(path: string): boolean;
+}
+
 export interface Context {
   /** This function's name (its export name). */
   functionName: string;
+  /** The deployment's assets/ folder (read-only). */
+  assets: Assets;
   /** For callables: who called (null when signed out). */
   auth: Auth | null;
   db: Db;

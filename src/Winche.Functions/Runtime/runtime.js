@@ -2,14 +2,14 @@
 // stdin and answers on stdout. Each run happens in its own worker that may use the network but not the files,
 // environment or programs of the machine, and is stopped when its time is up.
 //
-// In:  {t:"code", version, code}                     — a deployment's bundle (sent once per version)
+// In:  {t:"code", version, url, file, assets}         — a deployment's bundle file and its assets' files (once per version)
 //      {t:"analyze", id, version}                     — list the exported functions and their triggers
 //      {t:"invoke", id, version, name, arg, context, timeoutMs}
 //      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
 // Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"done", id, result | error} · {t:"ready"}
 
-const bundles = new Map();   // version -> data: URL of the bundle
+const bundles = new Map();   // version -> { url, file, assets: { path: file } }
 const workers = new Map();   // request id -> Worker
 
 const SANDBOX = { read: false, write: false, env: false, run: false, ffi: false, sys: false };
@@ -61,8 +61,26 @@ const secretsOf = (s, fn) => ({
   },
   has: (name) => Object.hasOwn(s, name) && s[name] != null,
 });
+// The deployment's assets folder: read-only files that came with the code (fonts, translations, templates).
+const assetPath = (path) => {
+  let p = String(path ?? "");
+  if (p.startsWith("./")) p = p.slice(2);
+  while (p.startsWith("/")) p = p.slice(1);
+  return p;
+};
+const assetsOf = (files) => ({
+  read: async (path) => { const f = files[assetPath(path)]; return f ? await Deno.readFile(f) : null; },
+  readText: async (path) => { const f = files[assetPath(path)]; return f ? await Deno.readTextFile(f) : null; },
+  list: async (folder) => {
+    let prefix = assetPath(folder);
+    while (prefix.endsWith("/")) prefix = prefix.slice(0, -1);
+    return Object.keys(files).filter((p) => prefix === "" || p.startsWith(prefix + "/")).sort();
+  },
+  has: (path) => Object.hasOwn(files, assetPath(path)),
+});
 const full = (c) => ({
   functionName: c.functionName,
+  assets: assetsOf(c.assets ?? {}),
   auth: c.auth ?? null,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),
   console: c.console ?? null,
@@ -106,6 +124,7 @@ self.onmessage = async (m) => {
   }
   try {
     const mod = await import(d.url);
+    if (d.context) d.context.assets = d.assets;
     if (d.t === "analyze") {
       const list = [];
       for (const [name, v] of Object.entries(mod))
@@ -137,7 +156,7 @@ self.onmessage = async (m) => {
       code: e?.name === "HttpsError" ? e.code : (e?.code && typeof e.code === "string" ? e.code : "internal"),
       message: String(e?.message ?? e), https: e?.name === "HttpsError",
       details: e?.name === "HttpsError" && e.details !== undefined ? JSON.parse(JSON.stringify(e.details)) : undefined,
-      stack: e?.stack ? String(e.stack).replace(new RegExp("data:application.javascript;base64,[A-Za-z0-9+=./]+", "g"), "<function>") : null,
+      stack: e?.stack ? String(e.stack).split(d.url).join("<function>") : null,
     } });
   }
 };
@@ -147,17 +166,12 @@ const BOOT_URL = "data:application/javascript;base64," + btoa(unescape(encodeURI
 const encoder = new TextEncoder();
 const out = (msg) => Deno.stdout.writeSync(encoder.encode(JSON.stringify(msg) + "\n"));
 
-function toDataUrl(code) {
-  const bytes = encoder.encode(code);
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return "data:application/javascript;base64," + btoa(bin);
-}
-
 function start(msg, network) {
-  const url = bundles.get(msg.version);
-  if (!url) { out({ t: "done", id: msg.id, error: { code: "unknown-version", message: "Send the code first." } }); return; }
-  const worker = new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, net: network, import: network } } });
+  const bundle = bundles.get(msg.version);
+  if (!bundle) { out({ t: "done", id: msg.id, error: { code: "unknown-version", message: "Send the code first." } }); return; }
+  // It may read its own bundle and its deployment's assets, and nothing else on the machine.
+  const read = [bundle.file, ...Object.values(bundle.assets)];
+  const worker = new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, read, net: network, import: network } } });
   workers.set(msg.id, worker);
   const finish = (reply) => {
     clearTimeout(timer);
@@ -175,7 +189,7 @@ function start(msg, network) {
     e.preventDefault();
     finish({ error: { code: "internal", message: e.message ?? "The function crashed.", stack: null } });
   };
-  worker.postMessage({ ...msg, url });
+  worker.postMessage({ ...msg, url: bundle.url, assets: bundle.assets });
 }
 
 out({ t: "ready" });
@@ -194,7 +208,7 @@ for await (const line of readLines()) {
   if (!line.trim()) continue;
   let msg;
   try { msg = JSON.parse(line); } catch { continue; }
-  if (msg.t === "code") bundles.set(msg.version, toDataUrl(msg.code));
+  if (msg.t === "code") bundles.set(msg.version, { url: msg.url, file: msg.file, assets: msg.assets ?? {} });
   else if (msg.t === "analyze") start({ ...msg, timeoutMs: 20000 }, false);
   else if (msg.t === "invoke") start(msg, true);
   else if (msg.t === "reply") workers.get(msg.id)?.postMessage(msg);
