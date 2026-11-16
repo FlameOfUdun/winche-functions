@@ -160,6 +160,36 @@ public class FunctionsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Disabling_and_deleting_a_user_run_their_triggers_with_who_it_was()
+    {
+        await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
+        await app.Service<WincheFunctions>().DeployAsync(Code("""
+            import { users } from "@winche/functions";
+            export const offboard = users.onDisabled(async (e, ctx) => { await ctx.db.set(`offboarded/${e.uid}`, { email: e.user.email }); });
+            export const erase = users.onDeleted(async (e, ctx) => {
+              await ctx.db.set(`erased/${e.uid}`, { email: e.user.email });
+              await ctx.db.delete(`people/${e.uid}`, { recursive: true });
+            });
+            """), null, null);
+        var db = app.Service<DocumentDatabase>();
+        WincheUserInfo ann;
+        await using (var scope = app.App.Services.CreateAsyncScope())
+            ann = await scope.ServiceProvider.GetRequiredService<IWincheAuth>().CreateUserAsync("ann@example.com", "correct horse battery");
+        await db.WriteAsync([new SetWrite { Path = $"people/{ann.Uid}/notes/n1", Fields = new Dictionary<string, Value> { ["text"] = new StringValue("hi") } }]);
+
+        await using (var scope = app.App.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<IWincheAuth>().SetDisabledAsync(ann.Uid, true);
+        await Until(async () => await db.GetAsync($"offboarded/{ann.Uid}") is not null, "users.onDisabled");
+        Assert.Equal("ann@example.com", ((StringValue)(await db.GetAsync($"offboarded/{ann.Uid}"))!.Fields["email"]).Value);
+
+        await using (var scope = app.App.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<IWincheAuth>().DeleteUserAsync(ann.Uid);
+        await Until(async () => await db.GetAsync($"erased/{ann.Uid}") is not null, "users.onDeleted");
+        Assert.Equal("ann@example.com", ((StringValue)(await db.GetAsync($"erased/{ann.Uid}"))!.Fields["email"]).Value);   // as they were
+        Assert.Null(await db.GetAsync($"people/{ann.Uid}/notes/n1"));
+    }
+
+    [Fact]
     public async Task Schedules_run_once_when_due_and_failures_are_retried()
     {
         var db = await pg.NewDatabaseAsync();
