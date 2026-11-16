@@ -56,7 +56,7 @@ public class FunctionsTests(PostgresFixture pg)
             """), null, null));
         Assert.Contains(bad.Problems, p => p.StartsWith("a:"));
         Assert.Contains(bad.Problems, p => p.StartsWith("b: 'every day' isn't a cron schedule"));
-        Assert.Contains(bad.Problems, p => p.StartsWith("c: timeoutSeconds is 1 to 540"));
+        Assert.Contains(bad.Problems, p => p.StartsWith("c: timeoutSeconds is 1 to 1200"));
         Assert.Null(functions.Current);
     }
 

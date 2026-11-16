@@ -14,7 +14,7 @@
     <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="Winche.Core" Version="1.1.0" />
     <PackageReference Include="Winche.Core.AspNetCore" Version="1.1.0" />
-    <PackageReference Include="Winche.Webhooks" Version="1.0.0" />
+    <PackageReference Include="Winche.Webhooks" Version="1.0.1" />
   </ItemGroup>
 
   <ItemGroup>

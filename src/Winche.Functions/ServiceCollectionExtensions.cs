@@ -21,6 +21,9 @@ public static class ServiceCollectionExtensions
         services.AddNpgsqlDataSource(options.ConnectionString, serviceKey: FunctionStore.DataSourceKey);
         services.AddSingleton<FunctionStore>();
         services.AddSingleton<FunctionSecrets>();
+        if (options.Settings)
+            Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, FunctionsSettings.Area, "Functions",
+                new FunctionsSettings { DefaultTimeoutSeconds = (int)options.DefaultTimeout.TotalSeconds }, s => s.Problems((int)options.MaxTimeout.TotalSeconds));
         services.AddSingleton<FunctionBundler>();
         services.AddSingleton<DenoRuntime>();
         services.AddSingleton<WincheFunctions>();

@@ -109,6 +109,8 @@ public sealed class FunctionsApp : IAsyncDisposable
             o.ConnectionString = db;
             o.DenoPath = Deno.Path;
             o.SyncInterval = TimeSpan.FromMilliseconds(300);
+            o.MaxTimeout = TimeSpan.FromMinutes(20);   // a server allowing longer runs than the default
+            o.UseSettings();
         });
         // One caller for every package (Winche.Core), as Winche Server sets it.
         b.Services.AddWincheCaller(http => http.Request.Headers["X-Test-Uid"].ToString() is { Length: > 0 } uid

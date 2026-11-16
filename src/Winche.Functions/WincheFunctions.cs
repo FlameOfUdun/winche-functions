@@ -21,6 +21,20 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     private volatile Deployment? _current;
     private readonly SemaphoreSlim _refresh = new(1, 1);
 
+    /// <summary>
+    /// How long <paramref name="fn"/> may run, in seconds: its own time from the settings (Functions → Settings), else
+    /// the one its code sets, else the settings' default; never more than <see cref="FunctionsOptions.MaxTimeout"/>.
+    /// Before-functions keep their code's time (the write waits for them).
+    /// </summary>
+    public int TimeoutFor(FunctionInfo fn)
+    {
+        if (fn.Trigger.Kind == "before") return fn.TimeoutSeconds;
+        var settings = services.GetService<Winche.Core.SettingsArea<FunctionsSettings>>()?.Current;
+        var seconds = settings?.Timeouts.TryGetValue(fn.Name, out var own) == true ? own
+            : fn.CodeTimeoutSeconds ?? settings?.DefaultTimeoutSeconds ?? (int)options.DefaultTimeout.TotalSeconds;
+        return Math.Clamp(seconds, 1, (int)options.MaxTimeout.TotalSeconds);
+    }
+
     /// <summary>The deployment in force, or null before the first.</summary>
     public Deployment? Current => _current;
 
@@ -152,7 +166,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                     if (declared.Count == 0) declared = null;
                 }
             }
-            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page));
+            var codeTimeout = node["options"]?["timeoutSeconds"]?.GetValue<double>() is { } cs ? (int)Math.Ceiling(cs) : (int?)null;
+            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout));
         }
         return list;
     }
@@ -223,7 +238,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         };
         var watch = Stopwatch.StartNew();
         JsonObject done;
-        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(fn.TimeoutSeconds), Bridge, Log, ct); }
+        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(TimeoutFor(fn)), Bridge, Log, ct); }
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
         if (done["error"] is JsonObject e)

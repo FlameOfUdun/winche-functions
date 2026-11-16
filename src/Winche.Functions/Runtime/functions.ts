@@ -235,7 +235,10 @@ export interface Context {
 }
 
 export interface FunctionOptions {
-  /** Default 60, at most 540 (9 minutes). Before-functions: default 5, at most 30. */
+  /**
+   * Seconds it may run: default 60 (the project's default), at most the server's longest (9 minutes unless the server
+   * allows more). The console can give a function its own time over this. Before-functions: default 5, at most 30.
+   */
   timeoutSeconds?: number;
   /** The secrets it reads with ctx.secrets.get: names in capitals, digits and underscores (e.g. "SES_SECRET_KEY"). */
   secrets?: string[];

@@ -26,8 +26,9 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
 /// <param name="Secrets">The secrets it declared (options.secrets), which it reads with ctx.secrets.get.</param>
 /// <param name="MinRole">Console actions and pages: the lowest console role that may run or see it (viewer, member, admin).</param>
 /// <param name="Page">Console pages: what the console shows.</param>
+/// <param name="CodeTimeoutSeconds">The run time its code sets (options.timeoutSeconds), if it does.</param>
 public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null,
-    string? MinRole = null, ConsolePageInfo? Page = null);
+    string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null);
 
 /// <summary>A console page: its sidebar title and icon, and the folder of its files in the deployment.</summary>
 public sealed record ConsolePageInfo(string Title, string Files, string? Icon, int Order);

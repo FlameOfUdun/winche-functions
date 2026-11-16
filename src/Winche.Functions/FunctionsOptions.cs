@@ -17,8 +17,20 @@ public sealed class FunctionsOptions
     /// <summary>A function's time unless it sets its own (default 60 s).</summary>
     public TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>The longest a function may set (default 9 minutes).</summary>
+    /// <summary>
+    /// The longest any function may run (default 9 minutes): what code, the default and each function's own time can
+    /// go up to. A run that long still ends if the server restarts: long work saves its progress as it goes.
+    /// </summary>
     public TimeSpan MaxTimeout { get; set; } = TimeSpan.FromMinutes(9);
+
+    /// <summary>Lets the console change the default run time and each function's own (settings area <c>functions</c>).</summary>
+    public FunctionsOptions UseSettings()
+    {
+        Settings = true;
+        return this;
+    }
+
+    internal bool Settings { get; private set; }
 
     /// <summary>
     /// Who called a callable, when functions should read it its own way; by default it is the request's caller

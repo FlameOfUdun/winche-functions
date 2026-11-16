@@ -67,7 +67,12 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   starts each run. Runs missed while every server was down happen once when one is back.
 - **Callables** answer the app directly: `{ data }`, or `{ error: { code, message } }` with an HTTP status. An
   `HttpsError`'s message reaches the app; other failures show as "The function failed." (details in the logs).
-- **Timeouts**: 60 seconds unless `timeoutSeconds` says otherwise (at most 540). A function past its time is stopped.
+- **Run time**: a function past its time is stopped. Its time is, in order: its own in the console (**Functions →
+  Settings**, with `o.UseSettings()`), else `timeoutSeconds` in its code, else the project's default (60 s unless
+  changed there). None can go past the server's longest (`FunctionsOptions.MaxTimeout`, default 9 minutes; Winche
+  Server's is a server setting). A long run still ends if the server restarts: long work saves its progress as it goes
+  (a cursor document a schedule continues from). While a triggered or scheduled run is going, its server keeps its
+  claim on it, so no other server starts it again.
 - **Logs**: `console.log` and `ctx.log` go to the server's logs (category `Winche.Functions`), with each run's
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
