@@ -104,6 +104,12 @@ public sealed class FunctionsApp : IAsyncDisposable
         });
         b.Services.AddSingleton<IArchive>(archive);
         b.Services.AddWincheAuth(o => { o.ConnectionString = db; o.Issuer = "https://test.example"; o.EmailPassword(); });
+        var assetArchive = new MemoryArchive();
+        Winche.Assets.AssetsServiceCollectionExtensions.AddWincheAssets(b.Services, o =>
+        {
+            o.ConnectionString = db;
+            o.UseArchive(_ => assetArchive);
+        });
         b.Services.AddWincheFunctions(o =>
         {
             o.ConnectionString = db;
@@ -116,6 +122,7 @@ public sealed class FunctionsApp : IAsyncDisposable
         b.Services.AddWincheCaller(http => http.Request.Headers["X-Test-Uid"].ToString() is { Length: > 0 } uid
             ? new Dictionary<string, object?> { ["uid"] = uid, ["role"] = "clinician" } : null);
         b.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
+        Winche.Functions.Assets.AssetsFunctionsExtensions.AddWincheFunctionsForAssets(b.Services);
         var app = b.Build();
         await app.InitializeWincheDatabaseAsync();
         await app.InitializeWincheStorageAsync();

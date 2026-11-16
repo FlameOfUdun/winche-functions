@@ -719,6 +719,78 @@ export class Auth {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// Assets (as winche_assets, with the server's rights)
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A file of a release: its path, its content's SHA-256, size and type. */
+export interface AssetEntry { path: string; hash: string; size: number; mimeType: string }
+
+/** A file of a release, to read. */
+export class AssetFileReference {
+  /** @internal */ constructor(private readonly call: Call, readonly release: number, readonly path: string) {}
+  /** Its bytes (up to 32 MB: larger ones through downloadUrl). */
+  async bytes(): Promise<Uint8Array> {
+    const r = await this.call("assets.read", { release: this.release, path: this.path });
+    if (!r) throw new WincheError("not-found", `There's no ${this.path} in release ${this.release}.`);
+    return base64.decode(r.base64);
+  }
+  /** Its contents as UTF-8 text. */
+  async text(): Promise<string> { return new TextDecoder().decode(await this.bytes()); }
+  /** Its contents decoded from JSON. */
+  async json<T = Json>(): Promise<T> { return JSON.parse(await this.text()) as T; }
+  /** A short-lived link to its bytes (to hand to someone, or to fetch a large one). */
+  async downloadUrl(): Promise<{ url: string; expiresAt: Date }> {
+    const r = await this.call("assets.downloadUrl", { release: this.release, path: this.path });
+    return { url: r.url, expiresAt: new Date(r.expiresAt) };
+  }
+}
+
+/** A published release: numbered, never changed. */
+export class AssetRelease {
+  /** @internal */ constructor(private readonly call: Call, readonly number: number, readonly note: string | null, readonly by: string | null,
+    readonly at: Date, readonly files: AssetEntry[]) {}
+  /** @internal */ static of(call: Call, r: any): AssetRelease { return new AssetRelease(call, r.number, r.note ?? null, r.by ?? null, new Date(r.at), r.files ?? []); }
+  /** Whether it has a file at path. */
+  has(path: string): boolean { return this.files.some((f) => f.path === path); }
+  /** The paths under a folder ("translations"), or all of them. */
+  paths(folder?: string): string[] {
+    const prefix = folder ? trimSlashes(folder) + "/" : "";
+    return this.files.map((f) => f.path).filter((p) => p.startsWith(prefix));
+  }
+  /** A file of this release (reading one it hasn't throws not-found). */
+  file(path: string): AssetFileReference { return new AssetFileReference(this.call, this.number, trimSlashes(path)); }
+}
+
+/** A channel: a name pointing at a release. */
+export class AssetChannelReference {
+  /** @internal */ constructor(private readonly call: Call, readonly name: string) {}
+  /** The release it points at now, or null when there's no such channel. */
+  async get(): Promise<AssetRelease | null> {
+    const r = await this.call("assets.channel", { name: this.name });
+    return r ? AssetRelease.of(this.call, r) : null;
+  }
+}
+
+export class Assets {
+  /** @internal */ constructor(private readonly call: Call) {}
+  /** A channel by name ("production"). */
+  channel(name: string): AssetChannelReference { return new AssetChannelReference(this.call, name); }
+  /** A release by number, or null. */
+  async release(number: number): Promise<AssetRelease | null> {
+    const r = await this.call("assets.release", { number });
+    return r ? AssetRelease.of(this.call, r) : null;
+  }
+  /** The channels and the release each points at. */
+  async channels(): Promise<{ name: string; release: number; updatedAt: Date; by: string | null }[]> {
+    return ((await this.call("assets.channels", {})) as any[]).map((c) => ({ name: c.name, release: c.release, updatedAt: new Date(c.updatedAt), by: c.by ?? null }));
+  }
+  /** The releases, newest first, without their files. */
+  async releases(limit = 50): Promise<{ number: number; note: string | null; by: string | null; at: Date; files: number; size: number }[]> {
+    return ((await this.call("assets.releases", { limit })) as any[]).map((r) => ({ ...r, at: new Date(r.at) }));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // Context and events
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -775,6 +847,8 @@ export interface Context {
   files: Files;
   /** Users' accounts. */
   auth: Auth;
+  /** The app's assets (releases and channels), with the server's rights. */
+  assets: Assets;
   /** The deployment's resources/ folder (read-only). */
   resources: Resources;
   /** The secrets this function declared in its options. */
@@ -797,7 +871,8 @@ interface RawContext {
   log(...args: unknown[]): void;
 }
 
-const READS = new Set(["db.get", "db.getAll", "db.query", "db.count", "db.aggregate", "files.get", "files.read", "files.page", "files.list", "users.get"]);
+const READS = new Set(["db.get", "db.getAll", "db.query", "db.count", "db.aggregate", "files.get", "files.read", "files.page", "files.list", "users.get",
+  "assets.channels", "assets.channel", "assets.release", "assets.releases", "assets.read", "assets.downloadUrl"]);
 
 /** @internal The context a handler gets. */
 export function contextOf(raw: RawContext): Context {
@@ -807,7 +882,7 @@ export function contextOf(raw: RawContext): Context {
     : raw.call;
   return {
     functionName: raw.functionName, caller: raw.auth ?? null, console: raw.console ?? null, secrets: raw.secrets, resources: raw.resources, log: raw.log,
-    documents: new Documents(call), files: new Files(call), auth: new Auth(call),
+    documents: new Documents(call), files: new Files(call), auth: new Auth(call), assets: new Assets(call),
   };
 }
 
@@ -906,6 +981,21 @@ export interface BeforeSignInEvent {
   ipAddress: string | null;
 }
 
+/** A release published (released) or a channel pointed at a release (channelMoved). */
+export interface AssetEvent {
+  type: "released" | "channelMoved";
+  /** The release published, or the one the channel points at now. */
+  release: number;
+  /** The channel moved (for released: the one published to, or null). */
+  channel: string | null;
+  /** The release's note (released). */
+  note: string | null;
+  /** Who published it (released). */
+  by: string | null;
+  id: string;
+  at: Date;
+}
+
 export interface ScheduleEvent {
   /** When this run was due. */
   scheduledAt: Date;
@@ -927,6 +1017,8 @@ function eventOf(trigger: Trigger, a: any, call: Call): unknown {
     }
     case "schedule":
       return { scheduledAt: new Date(a.scheduledAt), id: a.id };
+    case "assets":
+      return { type: a.type, release: a.release, channel: a.channel ?? null, note: a.note ?? null, by: a.by ?? null, id: a.id, at: new Date(a.at) };
     case "before":
       if (trigger.on === "documents")
         return { operation: a.operation, path: a.path, params: a.params ?? {}, caller: a.auth ?? null,
@@ -1016,6 +1108,7 @@ export type Trigger =
   | { kind: "files"; events: string[]; path: string }
   | { kind: "users"; events: string[] }
   | { kind: "schedule"; cron: string; timeZone?: string }
+  | { kind: "assets"; events: string[]; channel?: string }
   | { kind: "callable" }
   | { kind: "consolePage" }
   | { kind: "http"; events?: string[] }
@@ -1087,6 +1180,18 @@ export const users = {
   beforeSignIn: (handler: (e: BeforeSignInEvent, ctx: Context) => void | Promise<void>, options?: BeforeOptions) =>
     before("users", ["signIn"], undefined, handler, options),
 };
+
+/** Asset triggers: a release published, a channel moved. With options.channel, only that channel's. */
+export const assets = {
+  onReleased: (handler: Handler<AssetEvent>, options?: FunctionOptions & { channel?: string }) =>
+    onAssets(["released"], handler, options),
+  onChannelMoved: (handler: Handler<AssetEvent>, options?: FunctionOptions & { channel?: string }) =>
+    onAssets(["channelMoved"], handler, options),
+};
+
+const onAssets = (events: string[], handler: Handler<AssetEvent>, options?: FunctionOptions & { channel?: string }) =>
+  define<AssetEvent, unknown>({ kind: "assets", events, channel: options?.channel },
+    (e, ctx) => (options?.channel && e.channel !== options.channel ? null : handler(e, ctx)), options);
 
 /** Runs on a schedule: a cron expression ("minute hour day month weekday"), in UTC unless timeZone is given. */
 export const schedule = (cron: string, handler: Handler<ScheduleEvent>, options?: FunctionOptions & { timeZone?: string }) =>

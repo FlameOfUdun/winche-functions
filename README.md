@@ -33,6 +33,7 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 | `Winche.Functions.Database` | `ctx.documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database, with the server's rights. |
 | `Winche.Functions.Storage` | `ctx.files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
 | `Winche.Functions.Auth` | `ctx.auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
+| `Winche.Functions.Assets` | `ctx.assets`: channels, releases and their files (Winche Assets), and the `assets.onReleased` / `onChannelMoved` triggers. |
 
 ## Install
 
@@ -41,6 +42,7 @@ dotnet add package Winche.Functions
 dotnet add package Winche.Functions.Database   # triggers and the admin API for each product the app has
 dotnet add package Winche.Functions.Storage
 dotnet add package Winche.Functions.Auth
+dotnet add package Winche.Functions.Assets
 ```
 
 ## Setup
@@ -48,7 +50,8 @@ dotnet add package Winche.Functions.Auth
 ```csharp
 builder.Services.AddWincheHooks(o => o.ConnectionString = conn);          // triggers go through the hooks queue
 builder.Services.AddWincheFunctions(o => o.ConnectionString = conn);
-builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
+builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth()
+    .AddWincheFunctionsForAssets();
 builder.Services.AddWincheCaller(WincheClaims.FromAsync);                // ctx.auth for callables (Winche.Core)
 // The events come from the packages themselves: o.UseHooks(h => h.PublishChanges()) in AddWincheDatabase and
 // AddWincheStorage; Winche Auth publishes its user events on its own.
@@ -213,6 +216,28 @@ const all = await ctx.resources.list("translations");                // ["transl
   versions use them. Up to 2000 resources, 64 MB each.
 - Files under `resources/` aren't code: import JSON your code needs from elsewhere in the folder.
 - In the emulators, saving a file under `resources/` deploys again, as code does.
+
+## Assets
+
+`ctx.assets` reads the app's assets (Winche Assets: content published from the CLI as releases, followed through
+channels) with the server's rights — no rules. Not to be confused with resources, which are the function's own files.
+
+```ts
+import { assets, callable } from "@winche/functions";
+
+export const strings = callable(async (p: { lang: string }, ctx) => {
+  const release = await ctx.assets.channel("production").get();   // the release it points at, or null
+  return release?.file(`translations/${p.lang}.json`).json();     // also bytes(), text(), downloadUrl()
+});
+
+// A release published (released), or a channel pointed at one (channelMoved); { channel } narrows it.
+export const announce = assets.onReleased(async (e, ctx) => {
+  ctx.log(`Release #${e.release} on ${e.channel}: ${e.note}`);
+}, { channel: "production" });
+```
+
+`ctx.assets.release(n)`, `channels()` and `releases()` list the rest. A file is read whole, up to 32 MB; larger ones
+through `downloadUrl()`.
 
 ## Secrets
 

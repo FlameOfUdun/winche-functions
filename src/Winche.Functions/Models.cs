@@ -12,6 +12,7 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
         "documents" => $"documents {string.Join("/", Events ?? [])} at {Path}",
         "files" => $"files {string.Join("/", Events ?? [])} at {Path}",
         "users" => $"users {string.Join("/", Events ?? [])}",
+        "assets" => $"assets {string.Join("/", Events ?? [])}",
         "schedule" => $"schedule {Cron}{(TimeZone is null ? " (UTC)" : $" ({TimeZone})")}",
         "before" => $"before {On} {string.Join("/", Events ?? [])}{(Path is null ? "" : $" at {Path}")}",
         "consolePage" => "a console page",

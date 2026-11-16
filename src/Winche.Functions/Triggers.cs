@@ -25,7 +25,7 @@ internal sealed class FunctionHooks(WincheFunctions functions) : IHookProvider
         Do = new HookActionSettings { Kind = RunFunctionAction.ActionName, Options = new Dictionary<string, string> { ["function"] = f.Name } },
     })];
 
-    internal static string Source(string kind) => kind switch { "documents" => "database", "files" => "storage", "users" => "auth", _ => "schedule" };
+    internal static string Source(string kind) => kind switch { "documents" => "database", "files" => "storage", "users" => "auth", "assets" => "assets", _ => "schedule" };
 }
 
 /// <summary>The hook action that runs a function with the event (for functions' triggers; the console doesn't offer it for webhooks).</summary>
@@ -65,6 +65,11 @@ internal sealed class RunFunctionAction(IServiceProvider services) : IWincheActi
             "storage" => new JsonObject
             {
                 ["type"] = e.Type, ["path"] = e.Path, ["params"] = captures, ["file"] = e.Data?.DeepClone(), ["id"] = e.Id, ["at"] = e.At.ToString("O"),
+            },
+            "assets" => new JsonObject
+            {
+                ["type"] = e.Type, ["release"] = e.Data?["release"]?.DeepClone(), ["channel"] = e.Data?["channel"]?.DeepClone(),
+                ["note"] = e.Data?["note"]?.DeepClone(), ["by"] = e.Data?["by"]?.DeepClone(), ["id"] = e.Id, ["at"] = e.At.ToString("O"),
             },
             "auth" => new JsonObject
             {

@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\Winche.Functions.Database\Winche.Functions.Database.csproj" />
     <ProjectReference Include="..\..\src\Winche.Functions.Storage\Winche.Functions.Storage.csproj" />
     <ProjectReference Include="..\..\src\Winche.Functions.Auth\Winche.Functions.Auth.csproj" />
+    <ProjectReference Include="..\..\src\Winche.Functions.Assets\Winche.Functions.Assets.csproj" />
   </ItemGroup>
 
   <ItemGroup>
