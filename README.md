@@ -29,7 +29,7 @@ export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
 
 | Package | |
 | --- | --- |
-| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules. Deployed through the console (`winche functions deploy`, as you or a CI token). |
+| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`). Deployed through the console (`winche functions deploy`, as you or a CI token). |
 | `Winche.Functions.Database` | `ctx.db`: get, set, update, delete (recursive too), query — with the server's rights; `get` and `query` take `expand`. |
 | `Winche.Functions.Storage` | `ctx.files`: list, delete, deleteUnder. |
 | `Winche.Functions.Auth` | `ctx.users`: get, setClaims (Winche Auth). |
@@ -71,6 +71,27 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Logs**: `console.log` and `ctx.log` go to the server's logs (category `Winche.Functions`), with each run's
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
+
+## Secrets
+
+API keys and passwords a function needs (an email service's key, another service's client secret) are **secrets**: set
+in the console (Functions → Secrets) or with `winche functions secrets set NAME`, kept encrypted with the master key, and
+never shown again. A function declares the ones it reads, and only gets those:
+
+```ts
+export const sendReport = documents.onCreated("reports/{id}", async (e, ctx) => {
+  const key = ctx.secrets.get("MAIL_API_KEY");          // throws when it isn't declared or isn't set
+  await fetch("https://mail.example.com/send", { method: "POST", headers: { authorization: `Bearer ${key}` }, body: "…" });
+}, { secrets: ["MAIL_API_KEY"] });
+```
+
+- **Names:** capitals, digits and underscores, starting with a letter (`MAIL_API_KEY`).
+- **Changes** apply from the next run; there's nothing to deploy.
+- **Logs and errors** show `••••` in place of a secret's value (values of 4 characters or more).
+- **The console lists** each secret's name, when and by whom it was set, and which functions declare it, including the
+  ones a function declares but nobody has set yet.
+- They need Winche.Core's `AddWincheConfig` with a master key (Winche Server has it); a deployment that declares secrets
+  without it is refused.
 
 ## Following references
 

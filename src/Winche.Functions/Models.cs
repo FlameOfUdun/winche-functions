@@ -20,7 +20,8 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
 
 /// <summary>An exported function of a deployment.</summary>
 /// <param name="FailOpen">Before-functions: let the write through when the function crashes or times out.</param>
-public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false);
+/// <param name="Secrets">The secrets it declared (options.secrets), which it reads with ctx.secrets.get.</param>
+public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null);
 
 /// <summary>A deployed version: its source files, the bundle that runs, and the functions found in it.</summary>
 public sealed record Deployment(int Version, IReadOnlyDictionary<string, string> Files, string Bundle, IReadOnlyList<FunctionInfo> Functions,

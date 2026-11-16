@@ -20,6 +20,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddNpgsqlDataSource(options.ConnectionString, serviceKey: FunctionStore.DataSourceKey);
         services.AddSingleton<FunctionStore>();
+        services.AddSingleton<FunctionSecrets>();
         services.AddSingleton<FunctionBundler>();
         services.AddSingleton<DenoRuntime>();
         services.AddSingleton<WincheFunctions>();

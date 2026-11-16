@@ -13,7 +13,7 @@ namespace Winche.Functions;
 /// them. Every server follows the newest deployment within seconds.
 /// </summary>
 public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler, DenoRuntime runtime, FunctionsOptions options,
-    IServiceProvider services, ILoggerFactory loggers)
+    IServiceProvider services, ILoggerFactory loggers, FunctionSecrets secrets)
 {
     public const string LogCategory = "Winche.Functions";
     private static readonly Regex Name = new("^[A-Za-z_$][A-Za-z0-9_$]{0,63}$");
@@ -115,7 +115,20 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                     ? $"{name}: triggers need Winche.Webhooks in this app (AddWincheHooks)."
                     : $"{name}: this app has no {source} events (add Winche.Webhooks.{char.ToUpperInvariant(source[0])}{source[1..]}).");
             if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before")) problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
-            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true));
+            List<string>? declared = null;
+            if (node["options"]?["secrets"] is { } given)
+            {
+                if (given is not JsonArray items || items.Any(i => i?.GetValueKind() != JsonValueKind.String))
+                    problems.Add($"{name}: secrets is a list of names, e.g. [\"SES_SECRET_KEY\"].");
+                else
+                {
+                    declared = [.. items.Select(i => i!.GetValue<string>()).Distinct()];
+                    foreach (var secret in declared) if (FunctionSecrets.Problem(secret) is { } bad) problems.Add($"{name}: {bad}");
+                    if (declared.Count > 0 && !secrets.Available) problems.Add($"{name}: {FunctionSecrets.Unavailable}");
+                    if (declared.Count == 0) declared = null;
+                }
+            }
+            list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared));
         }
         return list;
     }
@@ -135,6 +148,9 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         var fn = d?.Functions.FirstOrDefault(f => f.Name == name && (kind is null || f.Trigger.Kind == kind));
         if (d is null || fn is null) return FunctionResult.Failed("not-found", $"There's no function {name}.");
         var logs = new List<FunctionLogLine>();
+        var secretValues = fn.Secrets is { Count: > 0 } names ? await secrets.ForRunAsync(names, ct) : [];
+        var hidden = secretValues.Values.OfType<string>().ToList();
+        string Hide(string text) => hidden.Count == 0 ? text : FunctionSecrets.Hide(text, hidden);
         var bindings = services.GetServices<IFunctionBinding>().ToList();
         async Task<JsonNode?> Bridge(string op, JsonObject args)
         {
@@ -148,6 +164,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         }
         void Log(string level, string message)
         {
+            message = Hide(message);
             lock (logs) logs.Add(new FunctionLogLine(level, message, DateTimeOffset.UtcNow));
             var lvl = level switch { "error" => LogLevel.Error, "warn" => LogLevel.Warning, "debug" => LogLevel.Debug, _ => LogLevel.Information };
             using (_log.BeginScope(new Dictionary<string, object?> { ["Function"] = name }))
@@ -158,6 +175,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             ["functionName"] = name,
             ["readOnly"] = readOnly,
             ["auth"] = caller.Uid is null ? null : new JsonObject { ["uid"] = caller.Uid, ["token"] = JsonSerializer.SerializeToNode(caller.Token ?? new Dictionary<string, object?>()) },
+            ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };
         var watch = Stopwatch.StartNew();
         JsonObject done;
@@ -167,10 +185,10 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         if (done["error"] is JsonObject e)
         {
             var code = e["code"]?.GetValue<string>() ?? "internal";
-            var message = e["message"]?.GetValue<string>() ?? "The function failed.";
+            var message = Hide(e["message"]?.GetValue<string>() ?? "The function failed.");
             using (_log.BeginScope(new Dictionary<string, object?> { ["Function"] = name }))
                 _log.LogWarning("{Function} failed after {Ms} ms ({Code}): {Message}{Stack}", name, ms, code, message,
-                    e["stack"]?.GetValue<string>() is { } stack ? "\n" + stack : "");
+                    e["stack"]?.GetValue<string>() is { } stack ? "\n" + Hide(stack) : "");
             return new FunctionResult(false, null, code, message, e["https"]?.GetValue<bool>() == true, ms, logs) { ErrorDetails = e["details"]?.DeepClone() };
         }
         using (_log.BeginScope(new Dictionary<string, object?> { ["Function"] = name }))

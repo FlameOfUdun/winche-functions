@@ -180,6 +180,17 @@ export interface Users {
   setClaims(uid: string, claims: { [claim: string]: Json } | null): Promise<void>;
 }
 
+export interface Secrets {
+  /**
+   * A secret's value (an API key, a password), set in the console (Functions → Secrets) or with
+   * `winche functions secrets set NAME`. The function must declare it: `{ secrets: ["NAME"] }` in its options.
+   * Throws when it isn't declared or isn't set. Values are hidden in the function's logs.
+   */
+  get(name: string): string;
+  /** Whether a declared secret is set. */
+  has(name: string): boolean;
+}
+
 export interface Context {
   /** This function's name (its export name). */
   functionName: string;
@@ -188,6 +199,8 @@ export interface Context {
   db: Db;
   files: Files;
   users: Users;
+  /** The secrets this function declared in its options. */
+  secrets: Secrets;
   /** Writes to the server's logs (Logs → functions); console.log does too. */
   log(...args: unknown[]): void;
 }
@@ -195,11 +208,15 @@ export interface Context {
 export interface FunctionOptions {
   /** Default 60, at most 540 (9 minutes). Before-functions: default 5, at most 30. */
   timeoutSeconds?: number;
+  /** The secrets it reads with ctx.secrets.get: names in capitals, digits and underscores (e.g. "SES_SECRET_KEY"). */
+  secrets?: string[];
 }
 
 export interface BeforeOptions {
   /** Default 5, at most 30: the write (and its locks) waits for it. */
   timeoutSeconds?: number;
+  /** The secrets it reads with ctx.secrets.get. */
+  secrets?: string[];
   /**
    * When the function crashes or runs out of time: refuse the write (the default), or let it through as it is.
    * A thrown HttpsError always refuses it.

@@ -45,9 +45,19 @@ const lock = (ctx) => ({
   files: { ...ctx.files, delete: readOnly("ctx.files.delete"), deleteUnder: readOnly("ctx.files.deleteUnder") },
   users: { ...ctx.users, setClaims: readOnly("ctx.users.setClaims") },
 });
+// Secrets the function declared (options.secrets), read from the console's encrypted store for this run.
+const secretsOf = (s, fn) => ({
+  get: (name) => {
+    if (!Object.hasOwn(s, name)) throw Object.assign(new Error(fn + " doesn't declare the secret " + name + ": add it to the function's options (secrets: ['" + name + "'])."), { code: "failed-precondition" });
+    if (s[name] == null) throw Object.assign(new Error("The secret " + name + " isn't set: set it in the console (Functions → Secrets) or with: winche functions secrets set " + name), { code: "failed-precondition" });
+    return s[name];
+  },
+  has: (name) => Object.hasOwn(s, name) && s[name] != null,
+});
 const full = (c) => ({
   functionName: c.functionName,
   auth: c.auth ?? null,
+  secrets: secretsOf(c.secrets ?? {}, c.functionName),
   log: (...a) => console.log(...a),
   db: {
     get: (path, o) => call("db.get", { path, ...(o?.expand ? { expand: o.expand } : {}) }),
