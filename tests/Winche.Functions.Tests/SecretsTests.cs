@@ -1,4 +1,5 @@
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Functions.Tests;
 

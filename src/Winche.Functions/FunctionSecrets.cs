@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Functions;
 
@@ -8,7 +9,7 @@ namespace Winche.Functions;
 public sealed record FunctionSecretInfo(string Name, bool IsSet, DateTimeOffset? SetAt, string? SetBy, IReadOnlyList<string> UsedBy);
 
 /// <summary>
-/// Secrets functions read with <c>ctx.secrets.get</c> (API keys, passwords): kept in Winche.Core's <see cref="SecretStore"/>,
+/// Secrets functions read with <c>ctx.secrets.get</c> (API keys, passwords): kept in Winche.Secrets' <see cref="SecretStore"/>,
 /// encrypted with the master key, as <c>functions.secret.NAME</c>. A function only gets the ones it declares
 /// (<c>{ secrets: ["NAME"] }</c>); the console and CLI set and remove them but never read them back.
 /// </summary>
