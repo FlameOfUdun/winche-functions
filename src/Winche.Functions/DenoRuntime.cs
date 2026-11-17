@@ -376,7 +376,8 @@ public sealed class DenoRuntime : IAsyncDisposable
                     if (_pending.TryRemove(id, out _)) p.Done.TrySetResult(error);
                 _ready?.TrySetException(new FunctionsUnavailableException("The functions runtime stopped."));
                 if (!process.HasExited) { try { process.Kill(); } catch (Exception) { } }
-                runtime._logger.LogWarning("Functions runtime stopped: {Process} (exit {Code}){Why}.", Label, process.HasExited ? process.ExitCode : -1,
+                if (_disposing) runtime._logger.LogInformation("Functions runtime stopped: {Process}.", Label);
+                else runtime._logger.LogWarning("Functions runtime stopped: {Process} (exit {Code}){Why}.", Label, process.HasExited ? process.ExitCode : -1,
                     _outOfMemory ? $", out of memory ({heapMb} MB per worker)" : "");
                 if (!_disposing)
                     runtime.Note(new FunctionEvent(DateTimeOffset.UtcNow, name == Shared ? null : name, name == Shared ? null : name,
