@@ -22,6 +22,35 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     private volatile Deployment? _current;
     private readonly SemaphoreSlim _refresh = new(1, 1);
     private readonly RunSlots _slots = new(() => options.MaxConcurrency);   // the server's limit may change while it runs
+    private readonly TaskCompletionSource _warmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile bool _stopping;
+    private int _inFlight;
+
+    /// <summary>
+    /// Done once the deployment in force has its functions' minInstances loaded (or there's none): until then a
+    /// server's first callers would wait for code to load. A host's readiness check waits for it.
+    /// </summary>
+    public Task Warmed => _warmed.Task;
+
+    /// <summary>Runs going on now.</summary>
+    public int RunsInFlight => Volatile.Read(ref _inFlight);
+
+    /// <summary>
+    /// Stopping (a deploy, a scale-in): new runs are refused as <c>unavailable</c> (apps retry; triggered runs are
+    /// delivered again, on another server), and this waits for the runs in flight to end, until <paramref name="ct"/>.
+    /// </summary>
+    public async Task StopTakingRunsAsync(CancellationToken ct)
+    {
+        _stopping = true;
+        var waited = Stopwatch.StartNew();
+        var said = false;
+        while (RunsInFlight > 0 && !ct.IsCancellationRequested)
+        {
+            if (!said) { _log.LogInformation("Stopping: waiting for {Runs} function runs to end.", RunsInFlight); said = true; }
+            try { await Task.Delay(100, ct); } catch (OperationCanceledException) { break; }
+        }
+        if (RunsInFlight > 0) _log.LogWarning("Stopped with {Runs} function runs still going after {Seconds} s: they end now (triggered ones are delivered again).", RunsInFlight, (int)waited.Elapsed.TotalSeconds);
+    }
     private int _watchingSettings;
 
     /// <summary>
@@ -87,6 +116,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         try
         {
             var latest = await store.LatestVersionAsync(ct);
+            if (latest == 0) _warmed.TrySetResult();   // nothing deployed: nothing to load
             if (latest == (_current?.Version ?? 0)) return;
             var previous = _current;
             _current = latest == 0 ? null : await store.GetAsync(latest, ct);
@@ -111,11 +141,13 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         try
         {
             // Each process keeps its own functions' instances loaded: the shared one all but the isolated ones.
-            foreach (var group in functions.GroupBy(ProcessFor))
-                await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None),
-                    group.ToDictionary(f => f.Name, f => LimitsFor(f).MinInstances), CancellationToken.None, group.Key);
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await Task.WhenAll(functions.GroupBy(ProcessFor).Select(group =>
+                runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None),
+                    group.ToDictionary(f => f.Name, f => LimitsFor(f).MinInstances), limit.Token, group.Key)));
         }
         catch (Exception e) { _log.LogDebug(e, "Functions version {Version} wasn't warmed up; its first run loads it.", d.Version); }
+        finally { _warmed.TrySetResult(); }
     }
 
     /// <summary>The most resources a deployment may have, and the largest one (bytes).</summary>
@@ -367,6 +399,14 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     }
 
     private async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
+    {
+        if (_stopping) return FunctionResult.Failed("unavailable", "This server is stopping: try again.");
+        Interlocked.Increment(ref _inFlight);
+        try { return await RunAsync(name, arg, caller, ct, kind, readOnly, console); }
+        finally { Interlocked.Decrement(ref _inFlight); }
+    }
+
+    private async Task<FunctionResult> RunAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
     {
         if (_current is null) await RefreshAsync(ct);
         var d = _current;

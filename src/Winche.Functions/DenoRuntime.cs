@@ -448,7 +448,8 @@ public sealed class DenoRuntime : IAsyncDisposable
             Interlocked.Exchange(ref _lastUsed, Environment.TickCount64);
             await EnsureStartedAsync(ct);
             await EnsureCodeAsync(version, code, resources, ct);
-            await SendAsync(new JsonObject
+            // Answered once the instances are loaded (a server is ready only then).
+            await AskAsync(new JsonObject
             {
                 ["t"] = "warm", ["version"] = version,
                 ["functions"] = new JsonObject(instances.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),

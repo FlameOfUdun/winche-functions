@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
                 s => s.Problems((int)options.MaxTimeout.TotalSeconds, options.MaxMemoryMb, options.MaxConcurrency,
                     options.MemoryBudget ??= FunctionsMemoryBudget.FromContainer(), options.SharedProcessMemoryMb));
         services.AddSingleton<FunctionBundler>();
+        services.AddHostedService<FunctionsStop>();   // first to hear the app is stopping: no new runs, the ones going on end
         services.AddSingleton<DenoRuntime>();
         services.AddSingleton<WincheFunctions>();
         services.AddSingleton<BeforeFunctions>();

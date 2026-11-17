@@ -7,7 +7,7 @@
 // In:  {t:"code", version, url, file, resources}         — a deployment's bundle file and its resources' files (once per version)
 //      {t:"analyze", id, version}                     — list the exported functions and their triggers
 //      {t:"invoke", id, version, name, arg, context, timeoutMs, memoryMb?, fresh?}
-//      {t:"warm", version, functions: {name: count}}  — keep that many instances of each function loaded
+//      {t:"warm", id, version, functions: {name: count}} — keep that many instances of each function loaded (done when they are)
 //      {t:"stats", id}                                — the instances now (answered as done, result: [...])
 //      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
@@ -207,22 +207,27 @@ function release(worker, pool) {
 // Keeps `count` instances of each named function loaded (its minInstances); the rest come and go with runs.
 function warm(version, functions) {
   const bundle = bundles.get(version);
-  if (!bundle) return;
+  const loads = [];
+  if (!bundle) return loads;
   for (const [name, count] of Object.entries(functions ?? {})) {
     const pool = poolOf(version, name);
     pool.min = count;
     for (let i = pool.idle.length + (pool.loading ?? 0); i < count; i++) {
       pool.loading = (pool.loading ?? 0) + 1;
       const worker = spawn(bundle, true, name);
-      worker.onmessage = (e) => {
-        if (e.data.t !== "loaded") return;
-        pool.loading--;
-        if (e.data.error) worker.terminate(); else release(worker, pool);
-      };
-      worker.onerror = (e) => { e.preventDefault(); pool.loading--; worker.terminate(); };
+      loads.push(new Promise((loaded) => {
+        worker.onmessage = (e) => {
+          if (e.data.t !== "loaded") return;
+          pool.loading--;
+          if (e.data.error) worker.terminate(); else release(worker, pool);
+          loaded();
+        };
+        worker.onerror = (e) => { e.preventDefault(); pool.loading--; worker.terminate(); loaded(); };
+      }));
       worker.postMessage({ t: "load", url: bundle.url });
     }
   }
+  return loads;
 }
 
 // Idle instances past their time go, down to their function's minInstances.
@@ -299,7 +304,10 @@ for await (const line of readLines()) {
   else if (msg.t === "analyze") start({ ...msg, timeoutMs: 20000 }, false);
   else if (msg.t === "invoke") start(msg, true);
   else if (msg.t === "reply") workers.get(msg.id)?.postMessage(msg);
-  else if (msg.t === "warm") warm(msg.version, msg.functions);
+  else if (msg.t === "warm") {
+    const loads = warm(msg.version, msg.functions);
+    if (msg.id !== undefined) Promise.all(loads).then(() => out({ t: "done", id: msg.id, result: loads.length }));
+  }
   else if (msg.t === "stats") out({ t: "done", id: msg.id, result: stats() });
   else if (msg.t === "forget") {
     bundles.delete(msg.version);
