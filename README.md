@@ -2,8 +2,9 @@
 
 JavaScript and TypeScript functions for the Winche stack. They run on the Winche server in [Deno](https://deno.com),
 each run in its own sandboxed worker (network yes; the server's files, environment and programs no). They're written
-in your editor (VS Code, with `winche functions init`) and deployed with `winche functions deploy`. The
-console shows what's deployed, its versions (roll back) and runs callables.
+in your editor (VS Code, with `winche functions init`; the Winche extension turns Deno on for the functions folder) and
+deployed with `winche functions deploy`. The console shows what's deployed, runs callables, and keeps every deploy in
+its change history to roll back to.
 
 ```ts
 import { callable, documents, files, users, schedule, FieldValue, HttpsError } from "@winche/functions";
@@ -256,7 +257,7 @@ export const strings = callable(async (data: { lang: string }, ctx) => …, {
 ## Secrets
 
 API keys and passwords a function needs (an email service's key, another service's client secret) are **secrets**: set
-in the console (Functions → Secrets) or with `winche functions secrets set NAME`, kept encrypted with the master key, and
+in the console (the **Secrets** page) or with `winche functions secrets:set NAME`, kept encrypted with the master key, and
 never shown again. A function declares the ones it reads, and only gets those:
 
 ```ts
@@ -390,3 +391,11 @@ export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.i
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
+
+## Upgrading to 2.0
+
+- Secrets are kept by [Winche.Secrets](https://github.com/FlameOfUdun/winche-secrets) (a package of its own, out of
+  Winche.Core 2.0); `AddWincheFunctions` adds it. A secret can now be a reference to AWS Secrets Manager or Parameter
+  Store (Winche.Secrets.Aws): functions read it with `ctx.secrets.get` as before.
+- New: Winche.Functions.Assets (`ctx.assets` and the assets triggers), `AddWincheFunctionsForAssets()`.
+- Built on Winche.Core 2.0, Winche.Auth 2.0, Winche.Storage 11 and Winche.Webhooks 2.0.
