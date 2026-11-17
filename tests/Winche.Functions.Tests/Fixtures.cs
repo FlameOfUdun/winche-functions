@@ -95,7 +95,7 @@ public sealed class FunctionsApp : IAsyncDisposable
     public T Service<T>() where T : notnull => App.Services.GetRequiredService<T>();
     internal MemoryArchive Archive { get; init; } = new();
 
-    public static async Task<FunctionsApp> StartAsync(string db)
+    public static async Task<FunctionsApp> StartAsync(string db, Action<FunctionsOptions>? functions = null)
     {
         var b = WebApplication.CreateBuilder();
         b.WebHost.UseUrls("http://127.0.0.1:0");
@@ -132,6 +132,7 @@ public sealed class FunctionsApp : IAsyncDisposable
             o.SyncInterval = TimeSpan.FromMilliseconds(300);
             o.MaxTimeout = TimeSpan.FromMinutes(20);   // a server allowing longer runs than the default
             o.UseSettings();
+            functions?.Invoke(o);
         });
         // One caller for every package (Winche.Core), as Winche Server sets it.
         b.Services.AddWincheCaller(http => http.Request.Headers["X-Test-Uid"].ToString() is { Length: > 0 } uid

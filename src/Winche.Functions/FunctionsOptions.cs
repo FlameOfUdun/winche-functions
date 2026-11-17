@@ -23,6 +23,22 @@ public sealed class FunctionsOptions
     /// <summary>The most runs of one function at once unless it sets its own (default 10).</summary>
     public int DefaultMaxInstances { get; set; } = 10;
 
+    /// <summary>
+    /// The heap limit of each worker in the shared process, in MB (default 1024). A run past it stops that process (its
+    /// runs in flight fail as out of memory) and it starts again; a function asking for more memory runs in its own.
+    /// </summary>
+    public int SharedProcessMemoryMb { get; set; } = 1024;
+
+    /// <summary>The most Deno processes per project (default 4): the shared one and isolated functions' own.</summary>
+    public int MaxProcesses { get; set; } = 4;
+
+    /// <summary>
+    /// What functions' processes may hold in all, shared by every project of the server (default: 60% of the
+    /// container's memory, or of the machine's; <c>WINCHE_FUNCTIONS_MEMORY_MB</c> sets it outright). An isolated
+    /// process that wouldn't fit isn't started: its function runs in the shared process.
+    /// </summary>
+    public FunctionsMemoryBudget? MemoryBudget { get; set; }
+
     /// <summary>A function's time unless it sets its own (default 60 s).</summary>
     public TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromSeconds(60);
 

@@ -63,6 +63,18 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         return Math.Clamp(seconds, 1, (int)options.MaxTimeout.TotalSeconds);
     }
 
+    /// <summary>
+    /// The process <paramref name="fn"/> runs in: its own when it's isolated (or asks for more memory than the shared
+    /// process's limit) and that fits, else the shared one. Its own process's heap limit is its memory plus room for
+    /// garbage between collections.
+    /// </summary>
+    private string ProcessFor(FunctionInfo fn)
+    {
+        if (fn.Trigger.Kind == "before") return DenoRuntime.Shared;
+        var l = LimitsFor(fn);
+        return runtime.Place(fn.Name, l.Isolate || l.MemoryMb > options.SharedProcessMemoryMb, l.MemoryMb + 128);
+    }
+
     /// <summary>The deployment in force, or null before the first.</summary>
     public Deployment? Current => _current;
 
@@ -98,8 +110,10 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         _slots.Reserve(functions.ToDictionary(f => f.Name, f => LimitsFor(f).ReservedInstances));
         try
         {
-            await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None),
-                functions.ToDictionary(f => f.Name, f => LimitsFor(f).MinInstances), CancellationToken.None);
+            // Each process keeps its own functions' instances loaded: the shared one all but the isolated ones.
+            foreach (var group in functions.GroupBy(ProcessFor))
+                await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None),
+                    group.ToDictionary(f => f.Name, f => LimitsFor(f).MinInstances), CancellationToken.None, group.Key);
         }
         catch (Exception e) { _log.LogDebug(e, "Functions version {Version} wasn't warmed up; its first run loads it.", d.Version); }
     }
@@ -405,7 +419,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         var left = timeout - watch.Elapsed;
         JsonObject done;
         try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, left > TimeSpan.FromSeconds(1) ? left : TimeSpan.FromSeconds(1), Bridge, Log, ct,
-                () => ResourceFilesAsync(d, ct), fresh: fn.Fresh, memoryMb: fn.Trigger.Kind == "before" ? null : limits.MemoryMb); }
+                () => ResourceFilesAsync(d, ct), fresh: fn.Fresh, memoryMb: fn.Trigger.Kind == "before" ? null : limits.MemoryMb,
+                process: ProcessFor(fn)); }
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
         if (done["retired"] is JsonObject retired)
