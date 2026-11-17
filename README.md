@@ -82,16 +82,48 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
 - **Sandbox**: runs happen in workers with network access only. A worker can read its own bundle and its deployment's
   resources, nothing else on the machine.
-- **Warm workers**: a version's workers are kept with its code loaded and reused, one run at a time, so a run starts in
-  well under a millisecond (an HTTP function answers in a couple of milliseconds, like any endpoint). The version in
-  force is loaded and a worker readied when the server starts and right after each deploy, so the first caller doesn't
-  wait either. A worker that runs out of time or crashes is replaced; idle ones go after five minutes (one is kept).
-  Projects and versions never share workers.
+- **Instances**: each function has its own instances (workers with its code loaded), reused one run at a time, so a
+  run starts in well under a millisecond (an HTTP function answers in a couple of milliseconds, like any endpoint).
+  Its `minInstances` are loaded when the server starts and right after each deploy, so the first caller doesn't wait
+  either. An instance that runs out of time, crashes, or holds more than its `memory` after a run is replaced; idle
+  ones go after five minutes, down to `minInstances`. Projects, versions and functions never share instances.
 - **Module state lasts between runs** on the same worker: keep a client or a parsed file at the top of the module to
   reuse it, but never one caller's data (the next run may be someone else's). A run must `await` what it starts:
   `ctx.documents`, `ctx.files` or `ctx.auth` called after it has answered is refused. `{ fresh: true }` gives a
   function a new sandbox for every run, with nothing kept, at the cost of loading its code each time (milliseconds for
   a small bundle, tens of them for a large one).
+
+## Memory and instances
+
+Each function may say, in its options (and each can be changed in the console's **Settings** tab, over its code's,
+or for all functions in **Functions → Settings**):
+
+| Option | Default | |
+| --- | --- | --- |
+| `memory` | 256 (MB) | What an instance may hold after a run (garbage collected first). Over it, the instance is replaced and its memory freed, with a log line. |
+| `minInstances` | 1 for callables and HTTP functions, else 0 | Instances kept loaded even when idle. |
+| `maxInstances` | 10 | Runs at once; more wait their turn (the wait counts against their time; `resource-exhausted` if none came). |
+| `reservedInstances` | 0 | Runs of the project's limit kept for this function, so busy ones can't take them all. |
+| `isolate` | false | A process of its own: a run that blows past its memory stops only that process. On by itself when `memory` is over the shared process's limit. |
+
+```ts
+export const report = callable(handler, { memory: 512, maxInstances: 2, isolate: true });
+```
+
+**Processes.** A project's functions run in one shared Deno process, plus one per isolated function. Every run's
+heap is capped (`FunctionsOptions.SharedProcessMemoryMb`, default 1024 MB; an isolated one's is its `memory` + 128): a
+run past it stops its process, whose runs in flight fail with `resource-exhausted` ("Ran out of memory…"), and the
+process starts again for the next. The processes' caps must fit the server's functions memory (`MemoryBudget`: 60%
+of the container's or machine's memory, shared by every project; `WINCHE_FUNCTIONS_MEMORY_MB` sets it). An isolated
+function that doesn't fit runs in the shared process (logged); settings asking for one that never could are refused.
+
+**Server limits** (`FunctionsOptions`; Winche Server's **Server settings**): `MaxMemoryMb` (1024), `MaxConcurrency`
+(runs at once per project, 16), `MaxProcesses` (4), `SharedProcessMemoryMb` (1024). The console's **Instances** tab
+shows a function's instances, their heap, and what was replaced or restarted lately.
+
+**Stopping.** When the app stops, functions take no new runs (`unavailable`: apps retry, triggered runs are delivered
+again) and let the ones going on end within the host's shutdown timeout. `WincheFunctions.Warmed` completes once the
+deployment's `minInstances` are loaded: a readiness check can wait for it.
 
 ## HTTP functions
 
@@ -407,6 +439,15 @@ export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.i
   Store (Winche.Secrets.Aws): functions read it with `ctx.secrets.get` as before.
 - New: Winche.Functions.Assets (`ctx.assets` and the assets triggers), `AddWincheFunctionsForAssets()`.
 - Built on Winche.Core 2.0, Winche.Auth 2.0, Winche.Storage 11 and Winche.Webhooks 2.0.
+
+## Upgrading to 2.2
+
+- Memory and instances (above): functions that set nothing get 256 MB per instance and at most 10 runs at once; one
+  holding more than 256 MB after a run is now replaced. Set `memory` on functions that keep large caches.
+- Each run's heap is capped (1024 MB in the shared process): a runaway run stops the shared process's runs in flight,
+  not the server. Isolate functions that might.
+- Hosts: `WincheFunctions.Warmed` for readiness; a stop waits for runs going on (raise the host's `ShutdownTimeout`
+  for long runs).
 
 ## Upgrading to 2.1
 
