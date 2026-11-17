@@ -803,8 +803,8 @@ export interface Caller {
 
 export interface Secrets {
   /**
-   * A secret's value (an API key, a password), set in the console (Functions → Secrets) or with
-   * `winche functions secrets set NAME`. The function must declare it: `{ secrets: ["NAME"] }` in its options.
+   * A secret's value (an API key, a password), set in the console (the Secrets page) or with
+   * `winche functions secrets:set NAME`. The function must declare it: `{ secrets: ["NAME"] }` in its options.
    * Throws when it isn't declared or isn't set. Values are hidden in the function's logs.
    */
   get(name: string): string;
