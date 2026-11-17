@@ -32,9 +32,10 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
 /// <param name="Input">The shape of what it takes, as JSON Schema (options.input): shown, not checked.</param>
 /// <param name="Output">The shape of what it returns, as JSON Schema (options.output): shown, not checked.</param>
 /// <param name="Example">A sample input (options.example); without one, made from <see cref="Input"/> (<see cref="ExampleInput"/>).</param>
+/// <param name="Fresh">A new sandbox for every run (options.fresh), instead of a warm worker reused from run to run.</param>
 public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int TimeoutSeconds, bool FailOpen = false, IReadOnlyList<string>? Secrets = null,
     string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null,
-    string? About = null, JsonNode? Input = null, JsonNode? Output = null, JsonNode? Example = null)
+    string? About = null, JsonNode? Input = null, JsonNode? Output = null, JsonNode? Example = null, bool Fresh = false)
 {
     /// <summary>The input to start from when running it by hand: its example, else one made from its input schema.</summary>
     public JsonNode? ExampleInput => Example?.DeepClone() ?? (Input is JsonObject schema ? SchemaExample.Of(schema) : null);

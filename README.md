@@ -80,10 +80,18 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Logs**: `console.log` and `ctx.log` go to the server's logs (category `Winche.Functions`), with each run's
   outcome and time.
 - **Imports**: relative files, `npm:` and `jsr:` packages, and URLs, resolved when deploying.
-- **Sandbox**: each run is a fresh worker with network access only. It can read its own bundle and its deployment's
-  resources, nothing else on the machine. The bundle is kept as a file named by its content, so Deno compiles it once per
-  server and every later run starts from its code cache: a large bundle (a PDF library) costs milliseconds per run,
-  not the time to compile it again.
+- **Sandbox**: runs happen in workers with network access only. A worker can read its own bundle and its deployment's
+  resources, nothing else on the machine.
+- **Warm workers**: a version's workers are kept with its code loaded and reused, one run at a time, so a run starts in
+  well under a millisecond (an HTTP function answers in a couple of milliseconds, like any endpoint). The version in
+  force is loaded and a worker readied when the server starts and right after each deploy, so the first caller doesn't
+  wait either. A worker that runs out of time or crashes is replaced; idle ones go after five minutes (one is kept).
+  Projects and versions never share workers.
+- **Module state lasts between runs** on the same worker: keep a client or a parsed file at the top of the module to
+  reuse it, but never one caller's data (the next run may be someone else's). A run must `await` what it starts:
+  `ctx.documents`, `ctx.files` or `ctx.auth` called after it has answered is refused. `{ fresh: true }` gives a
+  function a new sandbox for every run, with nothing kept, at the cost of loading its code each time (milliseconds for
+  a small bundle, tens of them for a large one).
 
 ## HTTP functions
 
@@ -398,4 +406,6 @@ export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.i
   Winche.Core 2.0); `AddWincheFunctions` adds it. A secret can now be a reference to AWS Secrets Manager or Parameter
   Store (Winche.Secrets.Aws): functions read it with `ctx.secrets.get` as before.
 - New: Winche.Functions.Assets (`ctx.assets` and the assets triggers), `AddWincheFunctionsForAssets()`.
+- Runs reuse warm workers (see How they run): what a module keeps at the top level now lasts between runs, and a call
+  to `ctx.*` after a run has answered is refused. `{ fresh: true }` keeps the old behaviour for a function.
 - Built on Winche.Core 2.0, Winche.Auth 2.0, Winche.Storage 11 and Winche.Webhooks 2.0.

@@ -1064,6 +1064,13 @@ export interface FunctionOptions {
   output?: JsonSchema;
   /** A sample input, to start a run by hand from (instead of one made from `input`). */
   example?: Json;
+  /**
+   * A new sandbox for every run, with nothing kept from the one before. Without it, runs reuse a warm worker (the code
+   * already loaded, so a run starts in well under a millisecond), and what the module keeps at the top level (a client,
+   * a parsed file) stays from run to run: never keep one caller's data there. `fresh` costs each run the time to load
+   * the code again.
+   */
+  fresh?: boolean;
 }
 
 /** A JSON Schema, e.g. { type: "object", properties: { lang: { enum: ["en", "de"] } }, required: ["lang"] }. */

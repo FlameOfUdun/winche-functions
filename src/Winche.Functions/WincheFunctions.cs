@@ -52,9 +52,20 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             var previous = _current;
             _current = latest == 0 ? null : await store.GetAsync(latest, ct);
             if (previous is not null) await runtime.ForgetAsync($"v{previous.Version}", ct);
+            if (_current is { } now) _ = WarmAsync(now);
             Changed?.Invoke();
         }
         finally { _refresh.Release(); }
+    }
+
+    /// <summary>
+    /// Loads the version in force into the runtime and has a worker ready with its code, so the first run after the
+    /// server starts or a deploy doesn't wait for it. Best effort: without Deno, or if it fails, runs start it themselves.
+    /// </summary>
+    private async Task WarmAsync(Deployment d)
+    {
+        try { await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None), CancellationToken.None); }
+        catch (Exception e) { _log.LogDebug(e, "Functions version {Version} wasn't warmed up; its first run loads it.", d.Version); }
     }
 
     /// <summary>The most resources a deployment may have, and the largest one (bytes).</summary>
@@ -231,7 +242,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 return value.DeepClone();
             }
             list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout,
-                about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems)));
+                about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems),
+                node["options"]?["fresh"]?.GetValue<bool>() == true));
         }
         return list;
     }
@@ -328,7 +340,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         var watch = Stopwatch.StartNew();
         JsonObject done;
         try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(TimeoutFor(fn)), Bridge, Log, ct,
-                () => ResourceFilesAsync(d, ct)); }
+                () => ResourceFilesAsync(d, ct), fresh: fn.Fresh); }
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
         if (done["error"] is JsonObject e)

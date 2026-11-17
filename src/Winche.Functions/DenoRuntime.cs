@@ -195,6 +195,14 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             return await pending.Done.Task;
     }
 
+    /// <summary>Starts the runtime if it isn't, gives it the version's code, and has a worker ready with it loaded.</summary>
+    public async Task WarmAsync(string version, string code, Func<Task<IReadOnlyDictionary<string, string>>>? resources, CancellationToken ct)
+    {
+        await EnsureStartedAsync(ct);
+        await EnsureCodeAsync(version, code, resources, ct);
+        await SendAsync(new JsonObject { ["t"] = "warm", ["version"] = version }, ct);
+    }
+
     /// <summary>Drops a bundle from the runtime (an analyzed one, or an old version).</summary>
     public async Task ForgetAsync(string version, CancellationToken ct)
     {
@@ -221,7 +229,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
     /// <summary>Runs function <paramref name="name"/>; <paramref name="bridge"/> answers its ctx calls, <paramref name="log"/> gets its output.</summary>
     public async Task<JsonObject> InvokeAsync(string version, string code, string name, JsonNode? arg, JsonObject context, TimeSpan timeout,
         Func<string, JsonObject, Task<JsonNode?>> bridge, Action<string, string> log, CancellationToken ct,
-        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null)
+        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null, bool fresh = false)
     {
         await _running.WaitAsync(ct);
         try
@@ -229,7 +237,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             return await RequestAsync(new JsonObject
             {
                 ["t"] = "invoke", ["version"] = version, ["name"] = name, ["arg"] = arg?.DeepClone(), ["context"] = context,
-                ["timeoutMs"] = (long)timeout.TotalMilliseconds,
+                ["timeoutMs"] = (long)timeout.TotalMilliseconds, ["fresh"] = fresh,
             }, version, code, new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), bridge, log), ct, resources);
         }
         finally { _running.Release(); }
