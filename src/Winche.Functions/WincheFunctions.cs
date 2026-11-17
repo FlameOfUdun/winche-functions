@@ -32,6 +32,19 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     /// </summary>
     public Task Warmed => _warmed.Task;
 
+    /// <summary>This server, among those running the project's functions (one per process), and its name as shown.</summary>
+    public string ServerId { get; } = Guid.NewGuid().ToString("N");
+    public string ServerName { get; } = Environment.MachineName;
+
+    internal static readonly TimeSpan SeenEvery = TimeSpan.FromSeconds(10);
+
+    /// <summary>The other servers running this project's functions now (seen in the last 30 seconds): their names.</summary>
+    public async Task<IReadOnlyList<string>> OtherServersAsync(CancellationToken ct = default)
+    {
+        try { return await store.ServersSeenAsync(SeenEvery * 3, ServerId, ct); }
+        catch (Exception e) when (e is not OperationCanceledException) { _log.LogDebug(e, "Couldn't list the other servers."); return []; }
+    }
+
     /// <summary>Runs going on now.</summary>
     public int RunsInFlight => Volatile.Read(ref _inFlight);
 

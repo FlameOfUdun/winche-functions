@@ -171,12 +171,26 @@ internal sealed class FunctionsSync(WincheFunctions functions, FunctionStore sto
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var seen = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
+            // This server runs the project's functions: noted every few seconds, so the console can say how many do.
+            if (DateTimeOffset.UtcNow - seen >= WincheFunctions.SeenEvery)
+            {
+                try { await store.SeenAsync(functions.ServerId, functions.ServerName, stoppingToken); seen = DateTimeOffset.UtcNow; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug(ex, "Couldn't note this server as running functions."); }
+            }
             try { await Task.Delay(options.SyncInterval, stoppingToken); }
             catch (OperationCanceledException) { break; }
             try { await functions.RefreshAsync(stoppingToken); }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Couldn't check for a new functions deployment."); }
         }
+    }
+
+    public override async Task StopAsync(CancellationToken ct)
+    {
+        await base.StopAsync(ct);
+        try { await store.GoneAsync(functions.ServerId, ct); }
+        catch (Exception ex) { logger.LogDebug(ex, "Couldn't note this server as stopped."); }
     }
 }

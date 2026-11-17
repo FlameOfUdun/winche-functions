@@ -45,6 +45,14 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
             );
             ALTER TABLE winche_function_deployments ADD COLUMN IF NOT EXISTS resources jsonb NOT NULL DEFAULT '{}'::jsonb;
         """,
+        // The servers running this project's functions: each notes it's alive (a row per running server).
+        """
+            CREATE UNLOGGED TABLE IF NOT EXISTS winche_function_servers (
+              id text PRIMARY KEY,
+              name text NOT NULL,
+              seen_at timestamptz NOT NULL
+            );
+        """,
     ];
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -52,6 +60,43 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         if (_ready) return;
         await WincheSchema.EnsureAsync(db, "functions", Steps, ct);
         _ready = true;
+    }
+
+    /// <summary>Notes that server <paramref name="id"/> (shown as <paramref name="name"/>) runs now; forgets servers gone for a day.</summary>
+    internal async Task SeenAsync(string id, string name, CancellationToken ct)
+    {
+        await InitializeAsync(ct);
+        await using var batch = db.CreateBatch();
+        var seen = new NpgsqlBatchCommand("""
+            INSERT INTO winche_function_servers (id, name, seen_at) VALUES ($1, $2, now())
+              ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, seen_at = now()
+            """);
+        seen.Parameters.AddWithValue(id);
+        seen.Parameters.AddWithValue(name);
+        batch.BatchCommands.Add(seen);
+        batch.BatchCommands.Add(new NpgsqlBatchCommand("DELETE FROM winche_function_servers WHERE seen_at < now() - interval '1 day'"));
+        await batch.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>The servers seen within <paramref name="within"/>, but <paramref name="except"/>: their names.</summary>
+    internal async Task<IReadOnlyList<string>> ServersSeenAsync(TimeSpan within, string except, CancellationToken ct)
+    {
+        await InitializeAsync(ct);
+        await using var cmd = db.CreateCommand("SELECT name FROM winche_function_servers WHERE seen_at > now() - $1 AND id <> $2 ORDER BY name");
+        cmd.Parameters.AddWithValue(within);
+        cmd.Parameters.AddWithValue(except);
+        var names = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) names.Add(r.GetString(0));
+        return names;
+    }
+
+    /// <summary>A stopping server's row goes at once.</summary>
+    internal async Task GoneAsync(string id, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand("DELETE FROM winche_function_servers WHERE id = $1");
+        cmd.Parameters.AddWithValue(id);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<int> LatestVersionAsync(CancellationToken ct = default)
