@@ -55,6 +55,7 @@ jobs:
           dotnet pack src/Winche.Functions.Database/Winche.Functions.Database.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Functions.Storage/Winche.Functions.Storage.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Functions.Auth/Winche.Functions.Auth.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Functions.Assets/Winche.Functions.Assets.csproj -c Release --no-build -o ./packages
 
       # Exchange the GitHub OIDC token for a short-lived NuGet.org API key.
       - name: NuGet login (trusted publishing)
