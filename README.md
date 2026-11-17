@@ -406,6 +406,11 @@ export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.i
   Winche.Core 2.0); `AddWincheFunctions` adds it. A secret can now be a reference to AWS Secrets Manager or Parameter
   Store (Winche.Secrets.Aws): functions read it with `ctx.secrets.get` as before.
 - New: Winche.Functions.Assets (`ctx.assets` and the assets triggers), `AddWincheFunctionsForAssets()`.
-- Runs reuse warm workers (see How they run): what a module keeps at the top level now lasts between runs, and a call
-  to `ctx.*` after a run has answered is refused. `{ fresh: true }` keeps the old behaviour for a function.
 - Built on Winche.Core 2.0, Winche.Auth 2.0, Winche.Storage 11 and Winche.Webhooks 2.0.
+
+## Upgrading to 2.1
+
+- Runs reuse warm workers (see How they run): a call starts in well under a millisecond instead of loading the code
+  each time. What a module keeps at the top level now lasts between runs on the same worker, and a call to `ctx.*`
+  after a run has answered is refused. `{ fresh: true }` keeps the old behaviour (a new sandbox every run) for a
+  function.
