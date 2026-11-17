@@ -1,5 +1,8 @@
 # Plan: function instances (memory, isolation, scale)
 
+**Status:** done in Winche.Functions 2.2, Winche Server 2.2 and the CLI 2.3. The Instances view shows the server that
+answered (not every server together).
+
 ## Why
 
 Since 2.1 runs reuse warm workers, so a function answers in about 2 ms. Today:
