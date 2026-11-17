@@ -72,7 +72,9 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             };
             // Reading: only the bundles and resources folders (each worker gets its own files of them, nothing else).
             var readable = $"--allow-read={WorkFolder("bundles")},{WorkFolder("resources")}";
-            foreach (var a in new[] { "run", "--quiet", "--no-prompt", "--unstable-worker-options", "--allow-net", "--allow-import", readable, script }) info.ArgumentList.Add(a);
+            // --expose-gc: after a run, an instance over its memory has its garbage collected before it's measured (the runtime
+            // keeps gc() to itself).
+            foreach (var a in new[] { "run", "--quiet", "--no-prompt", "--unstable-worker-options", "--v8-flags=--expose-gc", "--allow-net", "--allow-import", readable, script }) info.ArgumentList.Add(a);
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             lock (_sent) { _sent.Clear(); _bundleFiles.Clear(); }
@@ -195,12 +197,20 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             return await pending.Done.Task;
     }
 
-    /// <summary>Starts the runtime if it isn't, gives it the version's code, and has a worker ready with it loaded.</summary>
-    public async Task WarmAsync(string version, string code, Func<Task<IReadOnlyDictionary<string, string>>>? resources, CancellationToken ct)
+    /// <summary>
+    /// Starts the runtime if it isn't, gives it the version's code, and keeps <paramref name="instances"/> of each named
+    /// function loaded (its minInstances; 0 lets the idle ones go).
+    /// </summary>
+    public async Task WarmAsync(string version, string code, Func<Task<IReadOnlyDictionary<string, string>>>? resources,
+        IReadOnlyDictionary<string, int> instances, CancellationToken ct)
     {
         await EnsureStartedAsync(ct);
         await EnsureCodeAsync(version, code, resources, ct);
-        await SendAsync(new JsonObject { ["t"] = "warm", ["version"] = version }, ct);
+        await SendAsync(new JsonObject
+        {
+            ["t"] = "warm", ["version"] = version,
+            ["functions"] = new JsonObject(instances.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),
+        }, ct);
     }
 
     /// <summary>Drops a bundle from the runtime (an analyzed one, or an old version).</summary>
@@ -229,7 +239,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
     /// <summary>Runs function <paramref name="name"/>; <paramref name="bridge"/> answers its ctx calls, <paramref name="log"/> gets its output.</summary>
     public async Task<JsonObject> InvokeAsync(string version, string code, string name, JsonNode? arg, JsonObject context, TimeSpan timeout,
         Func<string, JsonObject, Task<JsonNode?>> bridge, Action<string, string> log, CancellationToken ct,
-        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null, bool fresh = false)
+        Func<Task<IReadOnlyDictionary<string, string>>>? resources = null, bool fresh = false, int? memoryMb = null)
     {
         await _running.WaitAsync(ct);
         try
@@ -237,7 +247,7 @@ public sealed class DenoRuntime(FunctionsOptions options, ILogger<DenoRuntime> l
             return await RequestAsync(new JsonObject
             {
                 ["t"] = "invoke", ["version"] = version, ["name"] = name, ["arg"] = arg?.DeepClone(), ["context"] = context,
-                ["timeoutMs"] = (long)timeout.TotalMilliseconds, ["fresh"] = fresh,
+                ["timeoutMs"] = (long)timeout.TotalMilliseconds, ["fresh"] = fresh, ["memoryMb"] = memoryMb,
             }, version, code, new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), bridge, log), ct, resources);
         }
         finally { _running.Release(); }

@@ -1,16 +1,17 @@
 // Winche functions runtime: started by the Winche server as one Deno process. It reads requests as JSON lines on
 // stdin and answers on stdout. Runs happen in workers that may use the network but not the files, environment or
-// programs of the machine. A version's workers are kept warm (its code already loaded) and reused, one run at a time;
-// one that runs out of time or crashes is stopped, and idle ones go after a while. A function with `fresh: true` gets a
-// new worker for each run.
+// programs of the machine. Each function has its own instances: workers with its code loaded, reused one run at a time.
+// One that runs out of time, crashes, or holds more memory than its function allows after a run is stopped; idle ones
+// go after a while, but a function's `minInstances` are kept. A function with `fresh: true` gets a new worker per run.
 //
 // In:  {t:"code", version, url, file, resources}         — a deployment's bundle file and its resources' files (once per version)
 //      {t:"analyze", id, version}                     — list the exported functions and their triggers
-//      {t:"invoke", id, version, name, arg, context, timeoutMs, fresh?}
-//      {t:"warm", version}                            — have a worker ready with the version's code loaded
+//      {t:"invoke", id, version, name, arg, context, timeoutMs, memoryMb?, fresh?}
+//      {t:"warm", version, functions: {name: count}}  — keep that many instances of each function loaded
 //      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
-// Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"done", id, result | error} · {t:"ready"}
+// Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"ready"}
+//      {t:"done", id, result | error, heapMb, retired?: {reason, heapMb, limitMb}}
 
 const bundles = new Map();   // version -> { url, file, resources: { path: file } }
 const workers = new Map();   // request id -> Worker
@@ -21,6 +22,17 @@ const SANDBOX = { read: false, write: false, env: false, run: false, ffi: false,
 const BOOT = `
 const pending = new Map();
 let next = 1;
+// V8's collector (the runtime is started with --expose-gc): kept here, not left for functions to call.
+const collect = globalThis.gc;
+try { delete globalThis.gc; } catch { /* not deletable: leave it */ }
+// The run's memory limit, in bytes (0: none). After a run the heap is measured; over the limit, garbage is collected
+// first so only what the function keeps counts.
+let limitBytes = 0;
+const done = (p) => {
+  let heap = Deno.memoryUsage().heapUsed;
+  if (limitBytes && heap > limitBytes && collect) { collect(); heap = Deno.memoryUsage().heapUsed; }
+  postMessage({ ...p, t: "done", heap });
+};
 // A run's ctx calls carry its id: one made after its run has finished (work it didn't await) is refused, never served
 // as part of the worker's next run.
 const callFor = (run) => (op, args) => new Promise((resolve, reject) => {
@@ -94,6 +106,7 @@ self.onmessage = async (m) => {
     catch (e) { postMessage({ t: "loaded", error: String(e?.message ?? e) }); }
     return;
   }
+  limitBytes = (d.memoryMb ?? 0) * 1024 * 1024;
   try {
     const mod = await import(d.url);
     if (d.context) d.context.resources = d.resources;
@@ -101,7 +114,7 @@ self.onmessage = async (m) => {
       const list = [];
       for (const [name, v] of Object.entries(mod))
         if (v && v.__winche === 1) list.push({ name, trigger: v.trigger, options: v.options ?? {} });
-      postMessage({ t: "done", result: list });
+      done({ result: list });
       return;
     }
     const fn = mod[d.name];
@@ -118,13 +131,13 @@ self.onmessage = async (m) => {
           : typeof out === "string" ? new Response(out, { headers: { "content-type": "text/plain; charset=utf-8" } })
           : Response.json(out);
       const bytes = new Uint8Array(await out.arrayBuffer());
-      postMessage({ t: "done", result: { status: out.status, headers: [...out.headers], body: bytes.length ? toBase64(bytes) : null } });
+      done({ result: { status: out.status, headers: [...out.headers], body: bytes.length ? toBase64(bytes) : null } });
       return;
     }
     const result = await fn.handler(d.arg, context(d.context, d.run));
-    postMessage({ t: "done", result: result === undefined ? null : JSON.parse(JSON.stringify(result)) });
+    done({ result: result === undefined ? null : JSON.parse(JSON.stringify(result)) });
   } catch (e) {
-    postMessage({ t: "done", error: {
+    done({ error: {
       code: e?.name === "HttpsError" ? e.code : (e?.code && typeof e.code === "string" ? e.code : "internal"),
       message: String(e?.message ?? e), https: e?.name === "HttpsError",
       details: e?.name === "HttpsError" && e.details !== undefined ? JSON.parse(JSON.stringify(e.details)) : undefined,
@@ -138,9 +151,10 @@ const BOOT_URL = "data:application/javascript;base64," + btoa(unescape(encodeURI
 const encoder = new TextEncoder();
 const out = (msg) => Deno.stdout.writeSync(encoder.encode(JSON.stringify(msg) + "\n"));
 
-// Warm workers by version: idle ones with the code loaded, ready for a run.
-const pools = new Map();   // version -> { idle: Worker[], warm: boolean }
-const IDLE_MS = 5 * 60 * 1000;   // an idle worker is stopped after this (but one, for a warmed version)
+// Instances by function: idle workers with the code loaded, ready for a run of that function.
+const pools = new Map();   // "version\nname" -> { version, idle: Worker[], min: number }
+const IDLE_MS = 5 * 60 * 1000;   // an idle instance is stopped after this (but a function's minInstances are kept)
+const MB = 1024 * 1024;
 
 function spawn(bundle, network) {
   // It may read its own bundle and its deployment's resources, and nothing else on the machine.
@@ -148,56 +162,56 @@ function spawn(bundle, network) {
   return new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, read, net: network, import: network } } });
 }
 
-function poolOf(version) {
-  let pool = pools.get(version);
-  if (!pool) pools.set(version, pool = { idle: [], warm: false });
+function poolOf(version, name) {
+  const key = version + "\n" + name;
+  let pool = pools.get(key);
+  if (!pool) pools.set(key, pool = { version, idle: [], min: 0 });
   return pool;
 }
 
 // Between runs: logs are dropped, and a late ctx call (from a finished run) is refused.
-function idle(worker, version) {
+function idle(worker, pool) {
   worker.onmessage = (e) => {
     const d = e.data;
     if (d.t === "call") worker.postMessage({ t: "reply", callId: d.callId, error: { code: "failed-precondition", message: "The run that made this call had already finished: await everything a function starts before it returns." } });
   };
-  worker.onerror = (e) => { e.preventDefault(); drop(worker, version); };
+  worker.onerror = (e) => { e.preventDefault(); worker.terminate(); pool.idle = pool.idle.filter((w) => w !== worker); };
 }
 
-function release(worker, version) {
-  if (!bundles.has(version)) { worker.terminate(); return; }   // the version was dropped meanwhile
+function release(worker, pool) {
+  if (!bundles.has(pool.version)) { worker.terminate(); return; }   // the version was dropped meanwhile
   worker.idleSince = Date.now();
-  idle(worker, version);
-  poolOf(version).idle.push(worker);
+  idle(worker, pool);
+  pool.idle.push(worker);
 }
 
-function drop(worker, version) {
-  worker.terminate();
-  const pool = pools.get(version);
-  if (pool) pool.idle = pool.idle.filter((w) => w !== worker);
-}
-
-function warm(version) {
+// Keeps `count` instances of each named function loaded (its minInstances); the rest come and go with runs.
+function warm(version, functions) {
   const bundle = bundles.get(version);
   if (!bundle) return;
-  const pool = poolOf(version);
-  pool.warm = true;
-  if (pool.idle.length > 0) return;
-  const worker = spawn(bundle, true);
-  worker.onmessage = (e) => {
-    if (e.data.t !== "loaded") return;
-    if (e.data.error) worker.terminate(); else release(worker, version);
-  };
-  worker.onerror = (e) => { e.preventDefault(); worker.terminate(); };
-  worker.postMessage({ t: "load", url: bundle.url });
+  for (const [name, count] of Object.entries(functions ?? {})) {
+    const pool = poolOf(version, name);
+    pool.min = count;
+    for (let i = pool.idle.length + (pool.loading ?? 0); i < count; i++) {
+      pool.loading = (pool.loading ?? 0) + 1;
+      const worker = spawn(bundle, true);
+      worker.onmessage = (e) => {
+        if (e.data.t !== "loaded") return;
+        pool.loading--;
+        if (e.data.error) worker.terminate(); else release(worker, pool);
+      };
+      worker.onerror = (e) => { e.preventDefault(); pool.loading--; worker.terminate(); };
+      worker.postMessage({ t: "load", url: bundle.url });
+    }
+  }
 }
 
-// Idle workers past their time go; a warmed version keeps one.
+// Idle instances past their time go, down to their function's minInstances.
 setInterval(() => {
   const now = Date.now();
   for (const pool of pools.values()) {
-    const keep = pool.warm ? 1 : 0;
     pool.idle.sort((a, b) => a.idleSince - b.idleSince);
-    while (pool.idle.length > keep && now - pool.idle[0].idleSince > IDLE_MS) pool.idle.shift().terminate();
+    while (pool.idle.length > pool.min && now - pool.idle[0].idleSince > IDLE_MS) pool.idle.shift().terminate();
   }
 }, 30_000);
 
@@ -206,7 +220,8 @@ function start(msg, network) {
   if (!bundle) { out({ t: "done", id: msg.id, error: { code: "unknown-version", message: "Send the code first." } }); return; }
   // A run takes a warm worker of its version (or makes one, kept afterwards); analysis and fresh functions get their own.
   const pooled = network && !msg.fresh;
-  const worker = (pooled && poolOf(msg.version).idle.pop()) || spawn(bundle, network);
+  const pool = pooled ? poolOf(msg.version, msg.name) : null;
+  const worker = pool?.idle.pop() || spawn(bundle, network);
   workers.set(msg.id, worker);
   let finished = false;
   const finish = (reply, reusable) => {
@@ -214,8 +229,15 @@ function start(msg, network) {
     finished = true;
     clearTimeout(timer);
     workers.delete(msg.id);
-    if (pooled && reusable) release(worker, msg.version); else worker.terminate();
-    out({ ...reply, t: "done", id: msg.id });
+    const heapMb = reply.heap !== undefined ? Math.round(reply.heap / MB) : undefined;
+    delete reply.heap;
+    // Holding more than its function allows, after its garbage was collected: replaced, its memory freed.
+    if (reusable && msg.memoryMb && heapMb > msg.memoryMb) {
+      reusable = false;
+      reply.retired = { reason: "memory", heapMb, limitMb: msg.memoryMb };
+    }
+    if (pool && reusable) release(worker, pool); else worker.terminate();
+    out({ ...reply, heapMb, t: "done", id: msg.id });
   };
   // Out of time: the worker is stopped (that's the only way to stop a run), not kept.
   const timer = setTimeout(() => finish({ error: { code: "deadline-exceeded", message: `Stopped after ${msg.timeoutMs / 1000} s (its timeout).` } }, false), msg.timeoutMs);
@@ -254,12 +276,11 @@ for await (const line of readLines()) {
   else if (msg.t === "analyze") start({ ...msg, timeoutMs: 20000 }, false);
   else if (msg.t === "invoke") start(msg, true);
   else if (msg.t === "reply") workers.get(msg.id)?.postMessage(msg);
-  else if (msg.t === "warm") warm(msg.version);
+  else if (msg.t === "warm") warm(msg.version, msg.functions);
   else if (msg.t === "forget") {
     bundles.delete(msg.version);
-    // Its idle workers go now; busy ones when their run ends.
-    for (const w of pools.get(msg.version)?.idle ?? []) w.terminate();
-    pools.delete(msg.version);
+    // Its idle instances go now; busy ones when their run ends.
+    for (const [key, pool] of pools) if (pool.version === msg.version) { for (const w of pool.idle) w.terminate(); pools.delete(key); }
   }
 }
 Deno.exit(0);   // the server closed our input: it's stopping

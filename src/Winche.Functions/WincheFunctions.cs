@@ -21,6 +21,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     private readonly ILogger _log = loggers.CreateLogger(LogCategory);
     private volatile Deployment? _current;
     private readonly SemaphoreSlim _refresh = new(1, 1);
+    private readonly RunSlots _slots = new(options.MaxConcurrency);
+    private int _watchingSettings;
 
     /// <summary>
     /// How long <paramref name="fn"/> may run, in seconds: its own time from the settings (Functions → Settings), else
@@ -89,7 +91,16 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     /// </summary>
     private async Task WarmAsync(Deployment d)
     {
-        try { await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None), CancellationToken.None); }
+        // A change in the console (a function's minInstances, its reservation) applies at once, not only at a deploy.
+        if (Interlocked.Exchange(ref _watchingSettings, 1) == 0 && services.GetService<Winche.Core.SettingsArea<FunctionsSettings>>() is { } area)
+            area.Changed += changed => { if (_current is { } now) _ = WarmAsync(now); };
+        var functions = d.Functions.Where(f => f.Trigger.Kind != "before" && !f.Fresh).ToList();
+        _slots.Reserve(functions.ToDictionary(f => f.Name, f => LimitsFor(f).ReservedInstances));
+        try
+        {
+            await runtime.WarmAsync($"v{d.Version}", d.Bundle, () => ResourceFilesAsync(d, CancellationToken.None),
+                functions.ToDictionary(f => f.Name, f => LimitsFor(f).MinInstances), CancellationToken.None);
+        }
         catch (Exception e) { _log.LogDebug(e, "Functions version {Version} wasn't warmed up; its first run loads it.", d.Version); }
     }
 
@@ -381,11 +392,25 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };
         var watch = Stopwatch.StartNew();
+        var limits = LimitsFor(fn);
+        var timeout = TimeSpan.FromSeconds(TimeoutFor(fn));
+        // Its turn: at most its maxInstances at once, a reserved slot of its own or a shared one; waiting counts
+        // against its time.
+        using var slot = await _slots.TakeAsync(name, limits.MaxInstances, timeout, ct);
+        if (slot is null)
+        {
+            _log.LogWarning("{Function} waited {Seconds} s for a free instance ({Max} at once) and didn't run.", name, (int)timeout.TotalSeconds, limits.MaxInstances);
+            return FunctionResult.Failed("resource-exhausted", $"{name} is busy: {limits.MaxInstances} runs at once, and none ended within its time.");
+        }
+        var left = timeout - watch.Elapsed;
         JsonObject done;
-        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, TimeSpan.FromSeconds(TimeoutFor(fn)), Bridge, Log, ct,
-                () => ResourceFilesAsync(d, ct), fresh: fn.Fresh); }
+        try { done = await runtime.InvokeAsync($"v{d.Version}", d.Bundle, name, arg, context, left > TimeSpan.FromSeconds(1) ? left : TimeSpan.FromSeconds(1), Bridge, Log, ct,
+                () => ResourceFilesAsync(d, ct), fresh: fn.Fresh, memoryMb: fn.Trigger.Kind == "before" ? null : limits.MemoryMb); }
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
+        if (done["retired"] is JsonObject retired)
+            _log.LogWarning("{Function}: instance replaced, holding {HeapMb} MB after a run (its limit {LimitMb} MB). Keep less at the top of its module, or give it more memory.",
+                name, retired["heapMb"]?.GetValue<int>(), retired["limitMb"]?.GetValue<int>());
         if (done["error"] is JsonObject e)
         {
             var code = e["code"]?.GetValue<string>() ?? "internal";
