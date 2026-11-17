@@ -112,3 +112,18 @@ public sealed class FunctionCallException(string code, string message) : Excepti
 {
     public string Code { get; } = code;
 }
+
+/// <summary>
+/// Something that happened to a function's instance or a process: <c>memory</c>, <c>timeout</c> or <c>crash</c> (an
+/// instance replaced), <c>out-of-memory</c> or <c>stopped</c> (a process; its runs in flight failed).
+/// </summary>
+/// <param name="Function">The function, or null for the shared process.</param>
+/// <param name="Process">The process (an isolated function's name), or null for the shared one.</param>
+public sealed record FunctionEvent(DateTimeOffset At, string? Function, string? Process, string Kind, string Message);
+
+/// <summary>A function's instance now: <c>busy</c>, <c>idle</c> or <c>loading</c>; its heap after its last run.</summary>
+public sealed record FunctionInstanceInfo(string Function, string State, int? HeapMb, int Runs, int AgeSeconds, int? BusySeconds);
+
+/// <summary>A process of the project: the shared one (Function null) or an isolated function's.</summary>
+public sealed record FunctionProcessInfo(string? Function, bool Running, int? Pid, int HeapMb, DateTimeOffset? StartedAt, int Starts,
+    IReadOnlyList<FunctionInstanceInfo> Instances);

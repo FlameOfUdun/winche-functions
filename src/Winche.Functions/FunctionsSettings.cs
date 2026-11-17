@@ -27,13 +27,24 @@ public sealed record FunctionsSettings
     public IReadOnlyList<string> Problems(int maxSeconds) => Problems(maxSeconds, 1024, 16);
 
     /// <summary>What's wrong, in sentences: times, memory and instances within this server's limits.</summary>
-    public IReadOnlyList<string> Problems(int maxSeconds, int maxMemoryMb, int maxConcurrency)
+    public IReadOnlyList<string> Problems(int maxSeconds, int maxMemoryMb, int maxConcurrency) => Problems(maxSeconds, maxMemoryMb, maxConcurrency, null, 0);
+
+    /// <summary>
+    /// As above, and a function in a process of its own (isolated, or asking for more than the shared process's
+    /// <paramref name="sharedMb"/>) must fit <paramref name="budget"/> beside the shared process.
+    /// </summary>
+    public IReadOnlyList<string> Problems(int maxSeconds, int maxMemoryMb, int maxConcurrency, FunctionsMemoryBudget? budget, int sharedMb)
     {
         var problems = new List<string>();
-        if (DefaultMemoryMb < FunctionLimitRules.MinMemoryMb || DefaultMemoryMb > maxMemoryMb)
-            problems.Add($"The default memory is {FunctionLimitRules.MinMemoryMb} to {maxMemoryMb} MB (this server's most).");
-        if (DefaultMaxInstances < 1 || DefaultMaxInstances > maxConcurrency)
-            problems.Add($"The default most runs at once is 1 to {maxConcurrency} (this server's most).");
+        if (budget is not null)
+            foreach (var (name, l) in Limits)
+                if (l.MemoryMb is { } m && (l.Isolate == true || m > sharedMb) && m + FunctionLimitRules.ProcessRoomMb + sharedMb > budget.TotalMb)
+                    problems.Add($"{name}: {m} MB in a process of its own doesn't fit this server's functions memory ({budget.TotalMb} MB, " +
+                        $"{sharedMb} MB of it for the shared process): at most {Math.Max(0, budget.TotalMb - sharedMb - FunctionLimitRules.ProcessRoomMb)} MB.");
+        // The project's defaults may be above this server's limits (a smaller server, or its limits lowered): they're
+        // held to them where they apply, not refused (that would refuse every other change too).
+        if (DefaultMemoryMb < FunctionLimitRules.MinMemoryMb) problems.Add($"The default memory is at least {FunctionLimitRules.MinMemoryMb} MB.");
+        if (DefaultMaxInstances < 1) problems.Add("The default most runs at once is at least 1.");
         foreach (var (name, limits) in Limits)
             problems.AddRange(FunctionLimitRules.Problems(string.IsNullOrWhiteSpace(name) ? "A function" : name, limits, maxMemoryMb, maxConcurrency));
         var reserved = Limits.Values.Sum(l => l.ReservedInstances ?? 0);
@@ -54,6 +65,9 @@ public static class FunctionLimitRules
 {
     /// <summary>The least memory a function may ask for, in MB.</summary>
     public const int MinMemoryMb = 64;
+
+    /// <summary>What an isolated process holds beside its function's memory: garbage between collections.</summary>
+    public const int ProcessRoomMb = 128;
 
     public static IReadOnlyList<string> Problems(string name, FunctionLimits l, int maxMemoryMb, int maxConcurrency)
     {

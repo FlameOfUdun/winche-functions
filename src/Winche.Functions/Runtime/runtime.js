@@ -8,10 +8,11 @@
 //      {t:"analyze", id, version}                     — list the exported functions and their triggers
 //      {t:"invoke", id, version, name, arg, context, timeoutMs, memoryMb?, fresh?}
 //      {t:"warm", version, functions: {name: count}}  — keep that many instances of each function loaded
+//      {t:"stats", id}                                — the instances now (answered as done, result: [...])
 //      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
 // Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"ready"}
-//      {t:"done", id, result | error, heapMb, retired?: {reason, heapMb, limitMb}}
+//      {t:"done", id, result | error, heapMb, retired?: {reason: "memory" | "timeout" | "crash", heapMb?, limitMb?}}
 
 const bundles = new Map();   // version -> { url, file, resources: { path: file } }
 const workers = new Map();   // request id -> Worker
@@ -156,10 +157,26 @@ const pools = new Map();   // "version\nname" -> { version, idle: Worker[], min:
 const IDLE_MS = 5 * 60 * 1000;   // an idle instance is stopped after this (but a function's minInstances are kept)
 const MB = 1024 * 1024;
 
-function spawn(bundle, network) {
+// Every instance, for stats: its function, when it started, its runs, its heap after its last run.
+const instances = new Set();
+
+function spawn(bundle, network, name) {
   // It may read its own bundle and its deployment's resources, and nothing else on the machine.
   const read = [bundle.file, ...Object.values(bundle.resources)];
-  return new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, read, net: network, import: network } } });
+  const worker = new Worker(BOOT_URL, { type: "module", deno: { permissions: { ...SANDBOX, read, net: network, import: network } } });
+  worker.meta = { name, since: Date.now(), runs: 0, heapMb: null, state: "loading", busySince: null };
+  instances.add(worker);
+  const terminate = worker.terminate.bind(worker);
+  worker.terminate = () => { instances.delete(worker); terminate(); };
+  return worker;
+}
+
+function stats() {
+  const now = Date.now();
+  return [...instances].filter((w) => w.meta.name).map((w) => ({
+    function: w.meta.name, state: w.meta.state, heapMb: w.meta.heapMb, runs: w.meta.runs,
+    ageSeconds: Math.round((now - w.meta.since) / 1000), busySeconds: w.meta.busySince ? Math.round((now - w.meta.busySince) / 1000) : null,
+  }));
 }
 
 function poolOf(version, name) {
@@ -181,6 +198,8 @@ function idle(worker, pool) {
 function release(worker, pool) {
   if (!bundles.has(pool.version)) { worker.terminate(); return; }   // the version was dropped meanwhile
   worker.idleSince = Date.now();
+  worker.meta.state = "idle";
+  worker.meta.busySince = null;
   idle(worker, pool);
   pool.idle.push(worker);
 }
@@ -194,7 +213,7 @@ function warm(version, functions) {
     pool.min = count;
     for (let i = pool.idle.length + (pool.loading ?? 0); i < count; i++) {
       pool.loading = (pool.loading ?? 0) + 1;
-      const worker = spawn(bundle, true);
+      const worker = spawn(bundle, true, name);
       worker.onmessage = (e) => {
         if (e.data.t !== "loaded") return;
         pool.loading--;
@@ -221,7 +240,9 @@ function start(msg, network) {
   // A run takes a warm worker of its version (or makes one, kept afterwards); analysis and fresh functions get their own.
   const pooled = network && !msg.fresh;
   const pool = pooled ? poolOf(msg.version, msg.name) : null;
-  const worker = pool?.idle.pop() || spawn(bundle, network);
+  const worker = pool?.idle.pop() || spawn(bundle, network, network ? msg.name : null);
+  worker.meta.state = "busy";
+  worker.meta.busySince = Date.now();
   workers.set(msg.id, worker);
   let finished = false;
   const finish = (reply, reusable) => {
@@ -231,6 +252,8 @@ function start(msg, network) {
     workers.delete(msg.id);
     const heapMb = reply.heap !== undefined ? Math.round(reply.heap / MB) : undefined;
     delete reply.heap;
+    worker.meta.runs++;
+    if (heapMb !== undefined) worker.meta.heapMb = heapMb;
     // Holding more than its function allows, after its garbage was collected: replaced, its memory freed.
     if (reusable && msg.memoryMb && heapMb > msg.memoryMb) {
       reusable = false;
@@ -240,7 +263,7 @@ function start(msg, network) {
     out({ ...reply, heapMb, t: "done", id: msg.id });
   };
   // Out of time: the worker is stopped (that's the only way to stop a run), not kept.
-  const timer = setTimeout(() => finish({ error: { code: "deadline-exceeded", message: `Stopped after ${msg.timeoutMs / 1000} s (its timeout).` } }, false), msg.timeoutMs);
+  const timer = setTimeout(() => finish({ error: { code: "deadline-exceeded", message: `Stopped after ${msg.timeoutMs / 1000} s (its timeout).` }, retired: msg.name ? { reason: "timeout" } : undefined }, false), msg.timeoutMs);
   worker.onmessage = (e) => {
     const d = e.data;
     if (d.t === "done") { const reply = { ...d }; delete reply.t; delete reply.run; finish(reply, true); }
@@ -251,7 +274,7 @@ function start(msg, network) {
   };
   worker.onerror = (e) => {
     e.preventDefault();
-    finish({ error: { code: "internal", message: e.message ?? "The function crashed.", stack: null } }, false);
+    finish({ error: { code: "internal", message: e.message ?? "The function crashed.", stack: null }, retired: msg.name ? { reason: "crash" } : undefined }, false);
   };
   worker.postMessage({ ...msg, run: msg.id, url: bundle.url, resources: bundle.resources });
 }
@@ -277,6 +300,7 @@ for await (const line of readLines()) {
   else if (msg.t === "invoke") start(msg, true);
   else if (msg.t === "reply") workers.get(msg.id)?.postMessage(msg);
   else if (msg.t === "warm") warm(msg.version, msg.functions);
+  else if (msg.t === "stats") out({ t: "done", id: msg.id, result: stats() });
   else if (msg.t === "forget") {
     bundles.delete(msg.version);
     // Its idle instances go now; busy ones when their run ends.

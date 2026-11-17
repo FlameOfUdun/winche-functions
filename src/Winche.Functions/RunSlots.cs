@@ -5,11 +5,12 @@ namespace Winche.Functions;
 /// function's reserved ones (<c>reservedInstances</c>, only for it) and a shared rest. A run takes its function's
 /// reserved slot when one is free, else a shared one, waiting its turn (within its timeout).
 /// </summary>
-internal sealed class RunSlots(int total)
+internal sealed class RunSlots(Func<int> total)
 {
     private readonly Lock _lock = new();
     private string _shape = "";
-    private SemaphoreSlim _shared = new(total, total);
+    private IReadOnlyDictionary<string, int> _reservations = new Dictionary<string, int>();
+    private SemaphoreSlim _shared = new(total(), total());
     private readonly Dictionary<string, (int Max, SemaphoreSlim Gate)> _max = [];
     private readonly Dictionary<string, (int Count, SemaphoreSlim Gate)> _reserved = [];
 
@@ -19,12 +20,14 @@ internal sealed class RunSlots(int total)
     /// </summary>
     public void Reserve(IReadOnlyDictionary<string, int> reserved)
     {
-        var shape = string.Join(",", reserved.Where(r => r.Value > 0).OrderBy(r => r.Key, StringComparer.Ordinal).Select(r => $"{r.Key}={r.Value}"));
+        var all = total();
+        var shape = all + ":" + string.Join(",", reserved.Where(r => r.Value > 0).OrderBy(r => r.Key, StringComparer.Ordinal).Select(r => $"{r.Key}={r.Value}"));
         lock (_lock)
         {
             if (shape == _shape) return;
             _shape = shape;
-            var rest = Math.Max(0, total - reserved.Values.Sum());
+            _reservations = reserved;
+            var rest = Math.Max(0, all - reserved.Values.Sum());
             _shared = new SemaphoreSlim(rest, Math.Max(rest, 1));
             _reserved.Clear();
             foreach (var (name, count) in reserved.Where(r => r.Value > 0)) _reserved[name] = (count, new SemaphoreSlim(count, count));
@@ -36,6 +39,7 @@ internal sealed class RunSlots(int total)
     {
         SemaphoreSlim own, shared;
         SemaphoreSlim? reserved;
+        if (!_shape.StartsWith(total() + ":", StringComparison.Ordinal)) Reserve(_reservations);   // the server's limit changed
         lock (_lock)
         {
             if (!_max.TryGetValue(name, out var m) || m.Max != max) _max[name] = m = (max, new SemaphoreSlim(max, max));

@@ -21,7 +21,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     private readonly ILogger _log = loggers.CreateLogger(LogCategory);
     private volatile Deployment? _current;
     private readonly SemaphoreSlim _refresh = new(1, 1);
-    private readonly RunSlots _slots = new(options.MaxConcurrency);
+    private readonly RunSlots _slots = new(() => options.MaxConcurrency);   // the server's limit may change while it runs
     private int _watchingSettings;
 
     /// <summary>
@@ -72,7 +72,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     {
         if (fn.Trigger.Kind == "before") return DenoRuntime.Shared;
         var l = LimitsFor(fn);
-        return runtime.Place(fn.Name, l.Isolate || l.MemoryMb > options.SharedProcessMemoryMb, l.MemoryMb + 128);
+        return runtime.Place(fn.Name, l.Isolate || l.MemoryMb > options.SharedProcessMemoryMb, l.MemoryMb + FunctionLimitRules.ProcessRoomMb);
     }
 
     /// <summary>The deployment in force, or null before the first.</summary>
@@ -424,8 +424,18 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         catch (FunctionsUnavailableException ex) { return FunctionResult.Failed("unavailable", ex.Message); }
         var ms = (int)watch.ElapsedMilliseconds;
         if (done["retired"] is JsonObject retired)
-            _log.LogWarning("{Function}: instance replaced, holding {HeapMb} MB after a run (its limit {LimitMb} MB). Keep less at the top of its module, or give it more memory.",
-                name, retired["heapMb"]?.GetValue<int>(), retired["limitMb"]?.GetValue<int>());
+        {
+            var reason = retired["reason"]?.GetValue<string>() ?? "crash";
+            var heap = (int?)retired["heapMb"];
+            var message = reason switch
+            {
+                "memory" => $"Instance replaced: holding {heap} MB after a run, over its {(int?)retired["limitMb"]} MB. Keep less at the top of its module, or give it more memory.",
+                "timeout" => "Instance replaced: a run went past its time.",
+                _ => "Instance replaced: it crashed.",
+            };
+            if (reason == "memory") _log.LogWarning("{Function}: {Message}", name, message);
+            runtime.Note(new FunctionEvent(DateTimeOffset.UtcNow, name, ProcessFor(fn) is { Length: > 0 } own ? own : null, reason, message));
+        }
         if (done["error"] is JsonObject e)
         {
             var code = e["code"]?.GetValue<string>() ?? "internal";

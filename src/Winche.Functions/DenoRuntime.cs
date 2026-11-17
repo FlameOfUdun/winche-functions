@@ -24,7 +24,6 @@ public sealed class DenoRuntime : IAsyncDisposable
     private readonly FunctionsOptions _options;
     private readonly ILogger<DenoRuntime> _logger;
     private readonly FunctionsMemoryBudget _budget;
-    private readonly SemaphoreSlim _running;
     private readonly ConcurrentDictionary<string, DenoProcess> _processes = new();
     private readonly Dictionary<string, string> _bundleFiles = [];   // version -> its bundle's file
     private readonly HashSet<string> _refused = [];   // isolated functions told they run in the shared process
@@ -37,7 +36,6 @@ public sealed class DenoRuntime : IAsyncDisposable
         _options = options;
         _logger = logger;
         _budget = options.MemoryBudget ??= FunctionsMemoryBudget.FromContainer();
-        _running = new SemaphoreSlim(Math.Max(1, options.MaxConcurrency));
         _idle = new Timer(_ => StopIdle(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
@@ -71,6 +69,49 @@ public sealed class DenoRuntime : IAsyncDisposable
     /// <summary>The processes running now: the shared one ("") and isolated functions', with their heap limits.</summary>
     public IReadOnlyDictionary<string, int> Processes =>
         _processes.Where(p => p.Value.Running).ToDictionary(p => p.Key, p => p.Value.HeapMb);
+
+    /// <summary>The functions' memory budget this runtime counts against.</summary>
+    public FunctionsMemoryBudget Budget => _budget;
+
+    private readonly LinkedList<FunctionEvent> _events = new();
+
+    /// <summary>What happened to instances and processes lately (newest first, at most 200): replacements, out of memory, restarts.</summary>
+    public IReadOnlyList<FunctionEvent> Events { get { lock (_events) return [.. _events]; } }
+
+    /// <summary>Records an event (and keeps the last 200).</summary>
+    public void Note(FunctionEvent e)
+    {
+        lock (_events)
+        {
+            _events.AddFirst(e);
+            while (_events.Count > 200) _events.RemoveLast();
+        }
+    }
+
+    /// <summary>Each process of the project (running or not) and its instances now.</summary>
+    public async Task<IReadOnlyList<FunctionProcessInfo>> StatsAsync(CancellationToken ct)
+    {
+        var list = new List<FunctionProcessInfo>();
+        foreach (var (name, p) in _processes.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            IReadOnlyList<FunctionInstanceInfo> instances = [];
+            if (p.Running)
+            {
+                try
+                {
+                    using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    wait.CancelAfter(TimeSpan.FromSeconds(3));
+                    var done = await p.AskAsync(new JsonObject { ["t"] = "stats" }, wait.Token);
+                    instances = (done["result"] as JsonArray ?? []).OfType<JsonObject>().Select(i => new FunctionInstanceInfo(
+                        i["function"]?.GetValue<string>() ?? "", i["state"]?.GetValue<string>() ?? "idle", (int?)i["heapMb"], (int?)i["runs"] ?? 0,
+                        (int?)i["ageSeconds"] ?? 0, (int?)i["busySeconds"])).ToList();
+                }
+                catch (Exception e) when (e is OperationCanceledException or FunctionsUnavailableException) { }
+            }
+            list.Add(new FunctionProcessInfo(name == Shared ? null : name, p.Running, p.Pid, p.HeapMb, p.StartedAt, p.Starts, instances));
+        }
+        return list;
+    }
 
     /// <summary>
     /// Where a function runs: its own process when it asks to be isolated (<paramref name="heapMb"/>: that process's
@@ -168,8 +209,7 @@ public sealed class DenoRuntime : IAsyncDisposable
         Func<string, JsonObject, Task<JsonNode?>> bridge, Action<string, string> log, CancellationToken ct,
         Func<Task<IReadOnlyDictionary<string, string>>>? resources = null, bool fresh = false, int? memoryMb = null, string process = Shared)
     {
-        await _running.WaitAsync(ct);
-        try
+        // How many run at once is the slots' job (WincheFunctions): per function, reserved and in all.
         {
             return await Process(process).RequestAsync(new JsonObject
             {
@@ -177,7 +217,6 @@ public sealed class DenoRuntime : IAsyncDisposable
                 ["timeoutMs"] = (long)timeout.TotalMilliseconds, ["fresh"] = fresh, ["memoryMb"] = memoryMb,
             }, version, code, new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), bridge, log), ct, resources);
         }
-        finally { _running.Release(); }
     }
 
     /// <summary>
@@ -220,6 +259,9 @@ public sealed class DenoRuntime : IAsyncDisposable
         private long _lastUsed = Environment.TickCount64;
 
         public int HeapMb => heapMb;
+        public int? Pid => _process is { HasExited: false } p ? p.Id : null;
+        public DateTimeOffset? StartedAt { get; private set; }
+        public int Starts => _starts;
         public bool Reserved => reserved;
         public bool Running => _process is { HasExited: false };
         private string Label => name == Shared ? "the shared functions process" : $"{name}'s process";
@@ -277,6 +319,7 @@ public sealed class DenoRuntime : IAsyncDisposable
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new FunctionsUnavailableException("The functions runtime didn't start within 30 seconds."); }
                 runtime._logger.LogInformation("Functions runtime started: {Process} (Deno, pid {Pid}, {HeapMb} MB per worker).", Label, process.Id, heapMb);
                 restarted = _starts++ > 0;
+                StartedAt = DateTimeOffset.UtcNow;
             }
             finally { _start.Release(); }
             // Started again after a crash: the instances it kept loaded are loaded again.
@@ -335,6 +378,11 @@ public sealed class DenoRuntime : IAsyncDisposable
                 if (!process.HasExited) { try { process.Kill(); } catch (Exception) { } }
                 runtime._logger.LogWarning("Functions runtime stopped: {Process} (exit {Code}){Why}.", Label, process.HasExited ? process.ExitCode : -1,
                     _outOfMemory ? $", out of memory ({heapMb} MB per worker)" : "");
+                if (!_disposing)
+                    runtime.Note(new FunctionEvent(DateTimeOffset.UtcNow, name == Shared ? null : name, name == Shared ? null : name,
+                        _outOfMemory ? "out-of-memory" : "stopped",
+                        _outOfMemory ? $"{char.ToUpperInvariant(Label[0])}{Label[1..]} ran out of memory ({heapMb} MB per worker); its runs in flight failed."
+                            : $"{char.ToUpperInvariant(Label[0])}{Label[1..]} stopped (exit {(process.HasExited ? process.ExitCode : -1)}); its runs in flight failed."));
             }
         }
 
@@ -419,8 +467,25 @@ public sealed class DenoRuntime : IAsyncDisposable
             }
         }
 
+        private volatile bool _disposing;
+
+        /// <summary>Asks the running process something answered as done (stats); doesn't start it.</summary>
+        public async Task<JsonObject> AskAsync(JsonObject msg, CancellationToken ct)
+        {
+            if (!Running) throw new FunctionsUnavailableException("Not running.");
+            var id = Interlocked.Increment(ref runtime._next);
+            msg["id"] = id;
+            var pending = new Pending(new(TaskCreationOptions.RunContinuationsAsynchronously), null, null);
+            _pending[id] = pending;
+            try { await SendAsync(msg, ct); }
+            catch { _pending.TryRemove(id, out _); throw; }
+            using (ct.Register(() => { if (_pending.TryRemove(id, out var p)) p.Done.TrySetCanceled(); }))
+                return await pending.Done.Task;
+        }
+
         public async ValueTask DisposeAsync()
         {
+            _disposing = true;
             if (_process is { HasExited: false } p)
             {
                 try { p.StandardInput.Close(); await p.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token); }

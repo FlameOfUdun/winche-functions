@@ -54,8 +54,9 @@ public class InstanceLimitsTests(PostgresFixture pg)
 
         // The console: project defaults, and report's own limits over its code's.
         var area = app.Service<SettingsArea<FunctionsSettings>>();
-        Assert.Contains(area.Validate(JsonNode.Parse("""{ "defaultMemoryMb": 2048, "limits": { "report": { "maxInstances": 0 } } }""")!),
-            p => p.StartsWith("The default memory is 64 to 1024 MB"));
+        Assert.Contains(area.Validate(JsonNode.Parse("""{ "defaultMemoryMb": 32, "limits": { "report": { "maxInstances": 0 } } }""")!),
+            p => p == "The default memory is at least 64 MB.");
+        Assert.Empty(area.Validate(JsonNode.Parse("""{ "defaultMemoryMb": 2048, "defaultMaxInstances": 50 }""")!));   // held to the server's limits
         Assert.Contains(area.Validate(JsonNode.Parse("""{ "limits": { "report": { "maxInstances": 0 } } }""")!), p => p.StartsWith("report: maxInstances is 1 to 16"));
         await app.Service<SettingsStore>().SaveAsync(FunctionsSettings.Area,
             JsonNode.Parse("""{ "defaultMemoryMb": 128, "defaultMaxInstances": 4, "limits": { "report": { "memoryMb": 512, "isolate": false } } }""")!, "admin@x", "Limits", null);
