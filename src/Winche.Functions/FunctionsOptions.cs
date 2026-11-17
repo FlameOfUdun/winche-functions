@@ -14,6 +14,15 @@ public sealed class FunctionsOptions
     /// <summary>How many functions may run at once on this server (default 16); more wait their turn.</summary>
     public int MaxConcurrency { get; set; } = 16;
 
+    /// <summary>The most memory a function may ask for, in MB (default 1024): what its code and settings can go up to.</summary>
+    public int MaxMemoryMb { get; set; } = 1024;
+
+    /// <summary>A function's memory unless it sets its own, in MB (default 256).</summary>
+    public int DefaultMemoryMb { get; set; } = 256;
+
+    /// <summary>The most runs of one function at once unless it sets its own (default 10).</summary>
+    public int DefaultMaxInstances { get; set; } = 10;
+
     /// <summary>A function's time unless it sets its own (default 60 s).</summary>
     public TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromSeconds(60);
 

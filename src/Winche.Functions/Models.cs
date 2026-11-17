@@ -37,9 +37,27 @@ public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int Time
     string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null,
     string? About = null, JsonNode? Input = null, JsonNode? Output = null, JsonNode? Example = null, bool Fresh = false)
 {
+    /// <summary>What its code says about its instances (memory, how many); the settings can say otherwise.</summary>
+    public FunctionLimits Limits { get; init; } = new();
+
     /// <summary>The input to start from when running it by hand: its example, else one made from its input schema.</summary>
     public JsonNode? ExampleInput => Example?.DeepClone() ?? (Input is JsonObject schema ? SchemaExample.Of(schema) : null);
 }
+
+/// <summary>
+/// How a function's instances may run (workers with its code loaded, one run at a time), as its code or a setting
+/// says; null where it doesn't.
+/// </summary>
+/// <param name="MemoryMb">The most an instance may hold after a run; past it, the instance is replaced.</param>
+/// <param name="MinInstances">Instances kept loaded even when idle.</param>
+/// <param name="MaxInstances">The most runs at once; more wait their turn.</param>
+/// <param name="ReservedInstances">Runs of the project's limit kept for this function.</param>
+/// <param name="Isolate">A process of its own, so nothing it does stops other functions' runs.</param>
+public sealed record FunctionLimits(int? MemoryMb = null, int? MinInstances = null, int? MaxInstances = null, int? ReservedInstances = null, bool? Isolate = null);
+
+/// <summary>The limits in force for a function, and where each comes from: <c>setting</c>, <c>code</c> or <c>default</c>.</summary>
+public sealed record FunctionLimitsInForce(int MemoryMb, int MinInstances, int MaxInstances, int ReservedInstances, bool Isolate,
+    IReadOnlyDictionary<string, string> From);
 
 /// <summary>A console page: its sidebar title and icon, and the folder of its files in the deployment.</summary>
 public sealed record ConsolePageInfo(string Title, string Files, string? Icon, int Order);

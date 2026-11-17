@@ -27,6 +27,31 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     /// the one its code sets, else the settings' default; never more than <see cref="FunctionsOptions.MaxTimeout"/>.
     /// Before-functions keep their code's time (the write waits for them).
     /// </summary>
+    public FunctionLimitsInForce LimitsFor(FunctionInfo fn)
+    {
+        var settings = services.GetService<Winche.Core.SettingsArea<FunctionsSettings>>()?.Current;
+        var own = settings?.Limits.TryGetValue(fn.Name, out var l) == true ? l : null;
+        var from = new Dictionary<string, string>();
+        T Pick<T>(string key, T? setting, T? code, T fallback) where T : struct
+        {
+            if (setting is { } s) { from[key] = "setting"; return s; }
+            if (code is { } c) { from[key] = "code"; return c; }
+            from[key] = "default";
+            return fallback;
+        }
+        var answers = fn.Trigger.Kind is "callable" or "http";   // called by apps: one kept loaded unless it says otherwise
+        var memory = Math.Clamp(Pick("memoryMb", own?.MemoryMb, fn.Limits.MemoryMb, settings?.DefaultMemoryMb ?? options.DefaultMemoryMb),
+            FunctionLimitRules.MinMemoryMb, options.MaxMemoryMb);
+        var max = Math.Clamp(Pick("maxInstances", own?.MaxInstances, fn.Limits.MaxInstances, settings?.DefaultMaxInstances ?? options.DefaultMaxInstances), 1, options.MaxConcurrency);
+        var min = Math.Clamp(Pick("minInstances", own?.MinInstances, fn.Limits.MinInstances, answers ? 1 : 0), 0, max);
+        var reserved = Math.Clamp(Pick("reservedInstances", own?.ReservedInstances, fn.Limits.ReservedInstances, 0), 0, max);
+        var isolate = Pick("isolate", own?.Isolate, fn.Limits.Isolate, false);
+        return new FunctionLimitsInForce(memory, min, max, reserved, isolate, from);
+    }
+
+    /// <summary>
+    /// How long <paramref name="fn"/> may run, in seconds (see above); its instances' limits are <see cref="LimitsFor"/>.
+    /// </summary>
     public int TimeoutFor(FunctionInfo fn)
     {
         if (fn.Trigger.Kind == "before") return fn.TimeoutSeconds;
@@ -241,10 +266,28 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 if (value.ToJsonString().Length > 16_384) { problems.Add($"{name}: {key} is at most 16 KB."); return null; }
                 return value.DeepClone();
             }
+            var opts = node["options"];
+            var notWhole = new List<string>();
+            int? Whole(string key)
+            {
+                if (opts?[key] is not JsonValue v) return null;
+                if (v.TryGetValue<double>(out var d) && d == Math.Floor(d) && Math.Abs(d) < int.MaxValue) return (int)d;
+                notWhole.Add($"{name}: {key} is a whole number.");
+                return null;
+            }
+            var limits = new FunctionLimits(Whole("memory"), Whole("minInstances"), Whole("maxInstances"), Whole("reservedInstances"),
+                opts?["isolate"] is JsonValue iv && iv.TryGetValue<bool>(out var isolate) ? isolate : null);
+            problems.AddRange(notWhole);
+            if (isBefore && limits != new FunctionLimits())
+                problems.Add($"{name}: a before-function runs inside the write: memory, instances and isolate are for other functions.");
+            else problems.AddRange(FunctionLimitRules.Problems(name, limits, options.MaxMemoryMb, options.MaxConcurrency));
             list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout,
                 about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems),
-                node["options"]?["fresh"]?.GetValue<bool>() == true));
+                node["options"]?["fresh"]?.GetValue<bool>() == true) { Limits = limits });
         }
+        var reservedInAll = list.Sum(f => f.Limits.ReservedInstances ?? 0);
+        if (reservedInAll > options.MaxConcurrency)
+            problems.Add($"Functions reserve {reservedInAll} runs at once in all; this server allows {options.MaxConcurrency}.");
         return list;
     }
 

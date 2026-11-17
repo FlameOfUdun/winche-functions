@@ -1071,6 +1071,23 @@ export interface FunctionOptions {
    * the code again.
    */
   fresh?: boolean;
+  /**
+   * The most memory, in MB, an instance (a worker with this function's code loaded) may hold after a run: past it the
+   * instance is replaced, its memory freed. Default 256 (the project's default), 64 to the server's most (1024 unless
+   * it allows more). The console can set it over this.
+   */
+  memory?: number;
+  /** Instances kept loaded even when idle, so a call never waits for one. Default 1 for callables and HTTP functions, else 0. */
+  minInstances?: number;
+  /** The most runs of this function at once; more wait their turn (within their timeout). Default 10 (the project's default). */
+  maxInstances?: number;
+  /** Runs of the project's limit kept for this function, so busy functions can't take them all. Default 0. */
+  reservedInstances?: number;
+  /**
+   * A process of its own: a run that uses too much memory, or crashes, stops only this function's runs, never another's.
+   * Costs the memory of a second runtime. A function asking for more memory than the shared process allows gets one anyway.
+   */
+  isolate?: boolean;
 }
 
 /** A JSON Schema, e.g. { type: "object", properties: { lang: { enum: ["en", "de"] } }, required: ["lang"] }. */

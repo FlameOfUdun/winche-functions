@@ -24,7 +24,8 @@ public static class ServiceCollectionExtensions
         Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(services);
         if (options.Settings)
             Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, FunctionsSettings.Area, "Functions",
-                new FunctionsSettings { DefaultTimeoutSeconds = (int)options.DefaultTimeout.TotalSeconds }, s => s.Problems((int)options.MaxTimeout.TotalSeconds));
+                new FunctionsSettings { DefaultTimeoutSeconds = (int)options.DefaultTimeout.TotalSeconds, DefaultMemoryMb = options.DefaultMemoryMb, DefaultMaxInstances = options.DefaultMaxInstances },
+                s => s.Problems((int)options.MaxTimeout.TotalSeconds, options.MaxMemoryMb, options.MaxConcurrency));
         services.AddSingleton<FunctionBundler>();
         services.AddSingleton<DenoRuntime>();
         services.AddSingleton<WincheFunctions>();
