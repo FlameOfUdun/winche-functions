@@ -14,6 +14,8 @@ public class ProcessesTests(PostgresFixture pg)
         export const sharedRunaway = callable(async () => hog());
 
         export const slow = callable(async () => { await sleep(1500); return "slow"; });
+        // In flight long enough for any runaway to fill its heap first, however slow the machine.
+        export const long = callable(async () => { await sleep(20000); return "long"; }, { timeoutSeconds: 30 });
         export const quick = callable(async () => "quick");
         """;
 
@@ -56,7 +58,7 @@ public class ProcessesTests(PostgresFixture pg)
         var (app, functions) = await Start(pg);
         await using var _ = app;
         Assert.True((await functions.InvokeAsync("quick", null, FunctionCaller.Server)).Ok);
-        var slow = functions.InvokeAsync("slow", null, FunctionCaller.Server);
+        var slow = functions.InvokeAsync("long", null, FunctionCaller.Server);
         await Task.Delay(200);
 
         var runaway = await functions.InvokeAsync("sharedRunaway", null, FunctionCaller.Server);
@@ -74,7 +76,7 @@ public class ProcessesTests(PostgresFixture pg)
         // 320 MB for the shared process leaves no room for runaway's 64 + 128.
         var (app, functions) = await Start(pg, o => o.MemoryBudget = new FunctionsMemoryBudget(400));
         await using var _ = app;
-        var slow = functions.InvokeAsync("slow", null, FunctionCaller.Server);
+        var slow = functions.InvokeAsync("long", null, FunctionCaller.Server);
         await Task.Delay(200);
         var runaway = await functions.InvokeAsync("runaway", null, FunctionCaller.Server);
         Assert.Contains("the shared functions process", runaway.ErrorMessage);
