@@ -49,9 +49,35 @@ public static class AdminOps
     private static FunctionCaller Caller(JsonObject who)
     {
         var uid = who["uid"]?.GetValue<string>() is { Length: > 0 } u ? u : throw new FunctionCallException("invalid-argument", "as(user): the user has no uid.");
-        var token = who["token"] is JsonObject t ? JsonSerializer.Deserialize<Dictionary<string, object?>>(t.ToJsonString()) : null;
-        return new FunctionCaller(uid, token ?? new Dictionary<string, object?> { ["sub"] = uid });
+        var token = who["token"] is JsonObject t ? (Dictionary<string, object?>)Plain(t)! : [];
+        return new FunctionCaller(uid, token);
     }
+
+    /// <summary>
+    /// The claims the access rules see for <paramref name="user"/> (<c>request.auth</c>): its token's claims, with its
+    /// uid as <c>uid</c> and <c>sub</c> whatever the token says.
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> Claims(FunctionCaller user)
+    {
+        var claims = new Dictionary<string, object?>(user.Token ?? new Dictionary<string, object?>(), StringComparer.Ordinal)
+        {
+            ["uid"] = user.Uid,
+            ["sub"] = user.Uid,
+        };
+        return claims;
+    }
+
+    /// <summary>JSON as plain .NET values (string, long, double, bool, lists, dictionaries), as claims are.</summary>
+    private static object? Plain(JsonNode? node) => node switch
+    {
+        null => null,
+        JsonObject o => o.ToDictionary(p => p.Key, p => Plain(p.Value), StringComparer.Ordinal),
+        JsonArray a => a.Select(Plain).ToList(),
+        JsonValue v when v.TryGetValue<bool>(out var b) => b,
+        JsonValue v when v.TryGetValue<long>(out var l) => l,
+        JsonValue v when v.TryGetValue<double>(out var d) => d,
+        JsonValue v => v.ToString(),
+    };
 }
 
 /// <summary>

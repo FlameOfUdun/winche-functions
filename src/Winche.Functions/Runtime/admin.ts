@@ -633,9 +633,13 @@ export class ChildReference {
   }
   /** Deletes the file, or everything under the folder. False when nothing was there. */
   async delete(): Promise<boolean> {
-    const one = await this.call("files.delete", { path: this.path });
+    // Acting as a user (as(user)), the rules may refuse the path as a file yet allow the files under it as a folder.
+    let one = false, refused: unknown = null;
+    try { one = (await this.call("files.delete", { path: this.path })) === true; }
+    catch (e) { if ((e as { code?: string })?.code !== "permission-denied") throw e; refused = e; }
     const under = await this.call("files.deleteUnder", { folder: this.path });
-    return one === true || under > 0;
+    if (refused && !(under > 0)) throw refused;
+    return one || under > 0;
   }
   /** A link anyone holding it can download the file with, until expiresAt. */
   async downloadUrl(): Promise<{ url: string; expiresAt: Date }> {

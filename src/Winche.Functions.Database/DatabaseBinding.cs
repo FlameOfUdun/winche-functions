@@ -63,16 +63,19 @@ internal sealed class FunctionsBeforeWrite(BeforeFunctions functions) : Winche.D
 }
 
 /// <summary>
-/// ctx.documents: reads, queries, counts, aggregations, writes and adds in the database's wire format (the same messages
-/// the WebSocket protocol takes), with the server's rights. The SDK builds them as the Dart SDK does.
+/// @winche/admin's documents: reads, queries, counts, aggregations, writes and adds in the database's wire format (the
+/// same messages the WebSocket protocol takes), with the server's rights, or as an app user under the access rules.
 /// </summary>
-internal sealed class DatabaseBinding : IFunctionBinding
+internal sealed class DatabaseBinding : IFunctionBinding, IActsAsAppUser
 {
     public string Name => "db";
 
     public async Task<JsonNode?> CallAsync(string op, JsonObject args, IServiceProvider services, CancellationToken ct)
     {
-        var db = services.GetRequiredService<DocumentDatabase>();
+        // As one of the app's users (as(user)): the rule-guarded database, with them as the caller; else the server's rights.
+        var asUser = services.GetService<AdminCaller>()?.As;
+        using var caller = asUser is null ? null : WincheCaller.Use(AdminOps.Claims(asUser));
+        IDocumentDatabase db = asUser is null ? services.GetRequiredService<DocumentDatabase>() : services.GetRequiredService<IDocumentDatabase>();
         try
         {
             switch (op)
@@ -120,12 +123,14 @@ internal sealed class DatabaseBinding : IFunctionBinding
                     return new JsonObject { ["document"] = Wire.Of(await db.AddAsync(collection, ValueSerializer.ReadFields(fields), ct)) };
                 }
                 case "deleteTree":
-                    // Everything under a path, in batches (no single unbounded transaction).
-                    return await db.DeleteSubtreeAsync(Path(args), ct: ct);
+                    // Everything under a path, in batches (no single unbounded transaction): the server's only.
+                    if (db is not DocumentDatabase core) throw new FunctionCallException("invalid-argument", "recursiveDelete isn't available acting as a user: delete the documents one by one.");
+                    return await core.DeleteSubtreeAsync(Path(args), ct: ct);
                 default:
                     throw new FunctionCallException("invalid-argument", $"ctx.documents: '{op}' isn't an operation.");
             }
         }
+        catch (Winche.Database.Authorization.AccessDeniedException ex) { throw new FunctionCallException("permission-denied", ex.Message); }
         catch (QueryParseException ex) { throw new FunctionCallException("invalid-argument", $"{ex.Message} ({ex.JsonPath})."); }
         catch (JsonException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
         catch (WireFormatException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }
@@ -158,7 +163,7 @@ internal sealed class DatabaseBinding : IFunctionBinding
 
     /// <summary>Adds included (the referenced documents, by path) and resolved (files, users) when expand was asked for.</summary>
     private static async Task<JsonObject> WithIncluded(JsonObject body, IEnumerable<Document?> docs, JsonObject args, IServiceProvider services,
-        DocumentDatabase db, CancellationToken ct)
+        IDocumentDatabase db, CancellationToken ct)
     {
         if (Expand(args, services) is not { } expand) return body;
         var expansion = await ReferenceExpander.ExpandAsync(db, docs, expand, ct, services.GetService<ReferenceResolvers>()?.For(db));

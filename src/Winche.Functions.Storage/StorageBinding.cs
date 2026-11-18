@@ -52,7 +52,11 @@ internal sealed class FunctionsBeforeFileWrite(BeforeFunctions functions) : Winc
     }
 }
 
-internal sealed class StorageBinding : IFunctionBinding
+/// <summary>
+/// @winche/admin's files: list, get, read, write, download links and delete, with the server's rights, or as an app user
+/// (as(user)) under the storage's access rules.
+/// </summary>
+internal sealed class StorageBinding : IFunctionBinding, IActsAsAppUser
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     public string Name => "files";
@@ -63,34 +67,46 @@ internal sealed class StorageBinding : IFunctionBinding
     public async Task<JsonNode?> CallAsync(string op, JsonObject args, IServiceProvider services, CancellationToken ct)
     {
         var files = services.GetRequiredService<FileStorage>();
+        // As one of the app's users: the rule-guarded storage, with them as the caller; else the server's rights.
+        var asUser = services.GetService<AdminCaller>()?.As;
+        using var caller = asUser is null ? null : WincheCaller.Use(AdminOps.Claims(asUser));
+        var guarded = asUser is null ? null : services.GetRequiredService<Winche.Storage.Authorization.RuleGuardedFileStorage>();
+        Winche.Storage.Interfaces.IFileStorage store = guarded is null ? files : guarded;
+        Writer write = guarded is null
+            ? (path, content, type, size, metadata, headers, ct) => files.WriteAsync(path, content, type, size, metadata, headers, ct)
+            : (path, content, type, size, metadata, headers, ct) => guarded.WriteAsync(path, content, type, size, metadata, headers, ct);
         string Arg(string name) => args[name]?.GetValue<string>() is { Length: > 0 } v ? v : throw new FunctionCallException("invalid-argument", $"Give {name}.");
         string? Text(string name) => args[name]?.GetValueKind() == JsonValueKind.String ? args[name]!.GetValue<string>() : null;
         try
         {
             return op switch
             {
-                "list" => JsonSerializer.SerializeToNode(await ListAllAsync(files, Arg("folder").Trim('/'), ct), Json),
+                "list" => JsonSerializer.SerializeToNode(await ListAllAsync(store, Arg("folder").Trim('/'), ct), Json),
                 // One page of a folder: files and subfolders in name order, and the token for the next page.
-                "page" => JsonSerializer.SerializeToNode(await files.ListAsync((Text("folder") ?? "").Trim('/'),
+                "page" => JsonSerializer.SerializeToNode(await store.ListAsync((Text("folder") ?? "").Trim('/'),
                     new Winche.Storage.Models.FileListOptions(MaxResults: args["maxResults"]?.GetValue<int>(), PageToken: Text("pageToken"), MimeType: Text("mimeType")), ct), Json),
                 // Merges metadata (null removes a key), optionally changes the download headers ("" clears one), only at ifVersion if given.
-                "updateMetadata" => await files.UpdateMetadataAsync(Arg("path").TrimStart('/'), args["metadata"] as JsonObject ?? [],
+                "updateMetadata" => await store.UpdateMetadataAsync(Arg("path").TrimStart('/'), args["metadata"] as JsonObject ?? [],
                     args["ifVersion"]?.GetValue<long>() is { } v ? new Winche.Storage.Models.FilePrecondition(Version: v) : null,
                     new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct) is { } updated
                     ? JsonSerializer.SerializeToNode(updated, Json) : throw new FunctionCallException("not-found", $"There's no file {Arg("path")}."),
-                "get" => await files.GetAsync(Arg("path").TrimStart('/'), ct) is { } record ? JsonSerializer.SerializeToNode(record, Json) : null,
-                "read" => await ReadAsync(files, Arg("path").TrimStart('/'), ct),
-                "write" => await WriteAsync(files, Arg("path").TrimStart('/'), args["base64"]?.GetValue<string>() ?? "", Text("mimeType"),
+                "get" => await store.GetAsync(Arg("path").TrimStart('/'), ct) is { } record ? JsonSerializer.SerializeToNode(record, Json) : null,
+                "read" => guarded is not null && await guarded.GetAsync(Arg("path").TrimStart('/'), ct) is null ? null   // the rules' get first
+                    : await ReadAsync(files, Arg("path").TrimStart('/'), ct),
+                "write" => await WriteAsync(write, Arg("path").TrimStart('/'), args["base64"]?.GetValue<string>() ?? "", Text("mimeType"),
                     args["metadata"] as JsonObject, new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct),
-                "copyFromUrl" => await CopyFromUrlAsync(files, Arg("path").TrimStart('/'), Arg("url"), args["headers"] as JsonObject, Text("mimeType"),
+                "copyFromUrl" => await CopyFromUrlAsync(write, Arg("path").TrimStart('/'), Arg("url"), args["headers"] as JsonObject, Text("mimeType"),
                     args["metadata"] as JsonObject, new Winche.Storage.Models.FileHeaders(Text("contentDisposition"), Text("cacheControl")), ct),
-                "downloadUrl" => await files.GenerateDownloadUrlAsync(Arg("path").TrimStart('/'), ct) is var link
+                "downloadUrl" => await store.GenerateDownloadUrlAsync(Arg("path").TrimStart('/'), ct) is var link
                     ? new JsonObject { ["url"] = link.Url, ["expiresAt"] = link.ExpiresAt } : null,
-                "delete" => await files.DeleteAsync(Arg("path").TrimStart('/'), ct: ct),
-                "deleteUnder" => await files.DeleteUnderAsync(Arg("folder").TrimStart('/') is var f && f.EndsWith('/') ? f : f + "/", ct),
+                "delete" => await store.DeleteAsync(Arg("path").TrimStart('/'), ct: ct),
+                "deleteUnder" => guarded is not null
+                    ? await DeleteUnderAsUserAsync(guarded, Arg("folder").Trim('/'), ct)   // each file the rules let them delete
+                    : await files.DeleteUnderAsync(Arg("folder").TrimStart('/') is var f && f.EndsWith('/') ? f : f + "/", ct),
                 _ => throw new FunctionCallException("invalid-argument", $"ctx.files.{op} isn't a thing."),
             };
         }
+        catch (Winche.Storage.Authorization.AccessDeniedException ex) { throw new FunctionCallException("permission-denied", ex.Message); }
         catch (Winche.Storage.Models.FileRecordNotFoundException) { throw new FunctionCallException("not-found", $"There's no file {Arg("path")}."); }
         catch (Winche.Storage.Models.InvalidUploadStatusException) { throw new FunctionCallException("failed-precondition", $"{Arg("path")} hasn't finished uploading."); }
         catch (Winche.Storage.Models.StorageException ex) { throw new FunctionCallException(ex.Error.Code, ex.Message); }
@@ -110,14 +126,18 @@ internal sealed class StorageBinding : IFunctionBinding
         return new JsonObject { ["base64"] = Convert.ToBase64String(copy.GetBuffer(), 0, (int)copy.Length), ["mimeType"] = record.MimeType };
     }
 
-    private static async Task<JsonNode?> WriteAsync(FileStorage files, string path, string base64, string? mimeType, JsonObject? metadata,
+    /// <summary>A one-step write: the server's, or the guarded storage's as an app user.</summary>
+    private delegate Task<Winche.Storage.Models.FileRecord> Writer(string path, Stream content, string mimeType, long sizeBytes,
+        JsonObject? metadata, Winche.Storage.Models.FileHeaders headers, CancellationToken ct);
+
+    private static async Task<JsonNode?> WriteAsync(Writer write, string path, string base64, string? mimeType, JsonObject? metadata,
         Winche.Storage.Models.FileHeaders headers, CancellationToken ct)
     {
         byte[] bytes;
         try { bytes = Convert.FromBase64String(base64); }
         catch (FormatException) { throw new FunctionCallException("invalid-argument", "The file's content didn't arrive whole."); }
         if (bytes.Length > MaxBytes) throw new FunctionCallException("out-of-range", $"Functions write up to {MaxBytes >> 20} MB at a time.");
-        var record = await files.WriteAsync(path, new MemoryStream(bytes), string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType,
+        var record = await write(path, new MemoryStream(bytes), string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType,
             bytes.Length, metadata?.DeepClone() as JsonObject, headers, ct);
         return JsonSerializer.SerializeToNode(record, Json);
     }
@@ -131,7 +151,7 @@ internal sealed class StorageBinding : IFunctionBinding
     /// Writes a file from a URL (GET, with the given headers), any size up to <see cref="MaxCopyBytes"/>: the bytes go
     /// from the URL to storage through a temporary file on the server, never through the function.
     /// </summary>
-    private static async Task<JsonNode?> CopyFromUrlAsync(FileStorage files, string path, string url, JsonObject? headers, string? mimeType,
+    private static async Task<JsonNode?> CopyFromUrlAsync(Writer write, string path, string url, JsonObject? headers, string? mimeType,
         JsonObject? metadata, Winche.Storage.Models.FileHeaders fileHeaders, CancellationToken ct)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
@@ -163,7 +183,7 @@ internal sealed class StorageBinding : IFunctionBinding
             }
             var type = !string.IsNullOrWhiteSpace(mimeType) ? mimeType : response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
             await using var content = File.OpenRead(temp);
-            var record = await files.WriteAsync(path, content, type, content.Length, metadata?.DeepClone() as JsonObject, fileHeaders, ct);
+            var record = await write(path, content, type, content.Length, metadata?.DeepClone() as JsonObject, fileHeaders, ct);
             return JsonSerializer.SerializeToNode(record, Json);
         }
         finally
@@ -172,8 +192,31 @@ internal sealed class StorageBinding : IFunctionBinding
         }
     }
 
+    /// <summary>
+    /// Deletes every file under <paramref name="folder"/> as an app user: what they may list, one file at a time, each
+    /// checked by the rules (the first refusal stops it; files already deleted stay deleted). How many went.
+    /// </summary>
+    private static async Task<int> DeleteUnderAsUserAsync(Winche.Storage.Authorization.RuleGuardedFileStorage files, string folder, CancellationToken ct)
+    {
+        var deleted = 0;
+        var folders = new Stack<string>([folder]);
+        while (folders.TryPop(out var current))
+        {
+            string? token = null;
+            do
+            {
+                var page = await files.ListAsync(current, new(PageToken: token), ct);
+                foreach (var file in page.Items)
+                    if (await files.DeleteAsync(file.Path, ct: ct)) deleted++;
+                foreach (var prefix in page.Prefixes) folders.Push(prefix.Trim('/'));
+                token = page.NextPageToken;
+            } while (token is not null);
+        }
+        return deleted;
+    }
+
     /// <summary>Every file directly in <paramref name="folder"/>, across pages.</summary>
-    private static async Task<List<Winche.Storage.Models.FileRecord>> ListAllAsync(FileStorage files, string folder, CancellationToken ct)
+    private static async Task<List<Winche.Storage.Models.FileRecord>> ListAllAsync(Winche.Storage.Interfaces.IFileStorage files, string folder, CancellationToken ct)
     {
         var all = new List<Winche.Storage.Models.FileRecord>();
         string? token = null;

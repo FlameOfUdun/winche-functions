@@ -95,7 +95,7 @@ public sealed class FunctionsApp : IAsyncDisposable
     public T Service<T>() where T : notnull => App.Services.GetRequiredService<T>();
     internal MemoryArchive Archive { get; init; } = new();
 
-    public static async Task<FunctionsApp> StartAsync(string db, Action<FunctionsOptions>? functions = null)
+    public static async Task<FunctionsApp> StartAsync(string db, Action<FunctionsOptions>? functions = null, string? databaseRules = null, string? storageRules = null)
     {
         var b = WebApplication.CreateBuilder();
         b.WebHost.UseUrls("http://127.0.0.1:0");
@@ -106,7 +106,7 @@ public sealed class FunctionsApp : IAsyncDisposable
         b.Services.AddWincheDatabase(o =>
         {
             o.ConnectionString = db;
-            o.UseRulesText("match {document=**} { allow read, write: if true; }");
+            o.UseRulesText(databaseRules ?? "match {document=**} { allow read, write: if true; }");
             o.ChangeFeed = o.ChangeFeed with { PollInterval = TimeSpan.FromMilliseconds(100) };
             o.UseHooks(h => h.PublishChanges());
         });
@@ -114,6 +114,7 @@ public sealed class FunctionsApp : IAsyncDisposable
         b.Services.AddWincheStorage(o =>
         {
             o.ConnectionString = db;
+            if (storageRules is not null) o.UseRulesText(storageRules);
             o.HookDelivery = new HookDeliveryOptions { PollInterval = TimeSpan.FromMilliseconds(100) };
             o.UseHooks(h => h.PublishChanges());
         });
