@@ -42,7 +42,8 @@ public static class AdminOps
             throw new FunctionCallException("invalid-argument", $"as(user) covers documents, files and functions; {name} has no access rules for app users.");
         await using var scope = services.CreateAsyncScope();
         scope.ServiceProvider.GetRequiredService<AdminCaller>().As = asUser;
-        return await binding.CallAsync(op[(dot + 1)..], args, scope.ServiceProvider, ct);
+        try { return await binding.CallAsync(op[(dot + 1)..], args, scope.ServiceProvider, ct); }
+        catch (ArgumentException ex) { throw new FunctionCallException("invalid-argument", ex.Message); }   // e.g. a malformed path
     }
 
     private static FunctionCaller Caller(JsonObject who)
