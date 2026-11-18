@@ -512,3 +512,8 @@ New: `as(user)` (the access rules applied for one of the app's users), `function
   each time. What a module keeps at the top level now lasts between runs on the same worker, and a call to `ctx.*`
   after a run has answered is refused. `{ fresh: true }` keeps the old behaviour (a new sandbox every run) for a
   function.
+
+## License
+
+Elastic License 2.0 (`LICENSE`), except the admin SDK, `@winche/admin` (`src/Winche.Functions/Runtime/admin.ts` and
+the npm package in `npm/admin`), which is MIT (`npm/admin/LICENSE`).

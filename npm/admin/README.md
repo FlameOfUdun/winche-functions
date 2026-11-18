@@ -31,3 +31,8 @@ export const leave = callable(async (data, ctx) => {
 
 Built from the SDK's one source in this repository (`src/Winche.Functions/Runtime/admin.ts`): `npm run build`
 (Deno and Node), `npm test`.
+
+## License
+
+MIT (`LICENSE`). The SDK's source, `src/Winche.Functions/Runtime/admin.ts`, is MIT too; the rest of this repository
+is under the Elastic License 2.0.
