@@ -17,15 +17,14 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
         "before" => $"before {On} {string.Join("/", Events ?? [])}{(Path is null ? "" : $" at {Path}")}",
         "consolePage" => "a console page",
         "http" => $"HTTP {(Events is { Count: > 0 } m ? string.Join("/", m) : "any method")} at /functions/v1/http/{{name}}",
-        "consoleAction" => "run from console pages",
         _ => "called by apps",
     };
 }
 
 /// <summary>An exported function of a deployment.</summary>
 /// <param name="FailOpen">Before-functions: let the write through when the function crashes or times out.</param>
-/// <param name="Secrets">The secrets it declared (options.secrets), which it reads with ctx.secrets.get.</param>
-/// <param name="MinRole">Console actions and pages: the lowest console role that may run or see it (viewer, member, admin).</param>
+/// <param name="Secrets">The secrets it lists (options.secrets: handles from secrets.define), which it may read.</param>
+/// <param name="MinRole">Console pages: the lowest console role that may see it (viewer, member, admin).</param>
 /// <param name="Page">Console pages: what the console shows.</param>
 /// <param name="CodeTimeoutSeconds">The run time its code sets (options.timeoutSeconds), if it does.</param>
 /// <param name="About">What it does, in a sentence (options.description).</param>

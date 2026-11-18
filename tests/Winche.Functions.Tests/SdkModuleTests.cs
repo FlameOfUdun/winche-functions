@@ -25,4 +25,14 @@ public class SdkModuleTests
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
+
+    [Fact]
+    public async Task The_admin_SDK_bundles_for_browsers_once()
+    {
+        var bundler = new FunctionBundler(new FunctionsOptions());
+        var js = await bundler.AdminForBrowserAsync(default);
+        Assert.Contains("initializeAdmin", js);
+        Assert.Contains("export {", js);
+        Assert.Same(js, await bundler.AdminForBrowserAsync(default));
+    }
 }

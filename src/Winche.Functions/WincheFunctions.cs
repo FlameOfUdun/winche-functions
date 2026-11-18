@@ -286,14 +286,13 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 problems.Add($"{name}: methods are GET, POST, PUT, PATCH, DELETE or HEAD.");
             if (trigger.Kind == "assets" && (trigger.Events ?? []).Any(e => e is not ("released" or "channelMoved")))
                 problems.Add($"{name}: assets events are released and channelMoved.");
-            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "consoleAction" or "http" or "assets"))
+            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "http" or "assets"))
                 problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
             string? minRole = null;
             ConsolePageInfo? page = null;
-            if (trigger.Kind is "consolePage" or "consoleAction")
+            if (trigger.Kind is "consolePage")
             {
-                minRole = node["options"]?["minRole"]?.GetValueKind() == JsonValueKind.String ? node["options"]!["minRole"]!.GetValue<string>()
-                    : trigger.Kind == "consolePage" ? "viewer" : "admin";
+                minRole = node["options"]?["minRole"]?.GetValueKind() == JsonValueKind.String ? node["options"]!["minRole"]!.GetValue<string>() : "viewer";
                 if (ConsolePages.Rank(minRole) < 0) problems.Add($"{name}: minRole is viewer, member or admin.");
             }
             if (trigger.Kind == "consolePage")
@@ -372,23 +371,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
 
     /// <summary>As above; with <paramref name="readOnly"/> its ctx.* calls may only read (before-functions).</summary>
     internal Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly) =>
-        InvokeAsync(name, arg, caller, ct, kind, readOnly, console: null);
-
-    /// <summary>
-    /// Runs console action <paramref name="name"/> for someone in the console: refused (permission-denied) unless their
-    /// role is at least the action's minRole. <paramref name="role"/> is viewer, member or admin.
-    /// </summary>
-    public async Task<FunctionResult> RunConsoleActionAsync(string name, JsonNode? arg, string? email, string role, CancellationToken ct = default)
-    {
-        if (_current is null) await RefreshAsync(ct);
-        var fn = _current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consoleAction");
-        if (fn is null) return FunctionResult.Failed("not-found", $"There's no console action {name}.");
-        if (ConsolePages.Rank(role) < ConsolePages.Rank(fn.MinRole ?? "admin"))
-            return FunctionResult.Failed("permission-denied", $"{name} needs the {fn.MinRole} role.") with { PublicError = true };
-        _log.LogInformation("Console action {Function} run by {By} ({Role}).", name, email ?? "someone", role);
-        return await InvokeAsync(name, arg, FunctionCaller.Server, ct, "consoleAction", readOnly: false,
-            console: new JsonObject { ["user"] = new JsonObject { ["email"] = email, ["role"] = role } });
-    }
+        InvokeAsync(name, arg, caller, ct, kind, readOnly, 0);
 
     /// <summary>
     /// A deployment's resources as files on this machine (path → file), written from the database the first time they're
@@ -413,15 +396,15 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         return map;
     }
 
-    private async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
+    private async Task<FunctionResult> InvokeAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, int _)
     {
         if (_stopping) return FunctionResult.Failed("unavailable", "This server is stopping: try again.");
         Interlocked.Increment(ref _inFlight);
-        try { return await RunAsync(name, arg, caller, ct, kind, readOnly, console); }
+        try { return await RunAsync(name, arg, caller, ct, kind, readOnly); }
         finally { Interlocked.Decrement(ref _inFlight); }
     }
 
-    private async Task<FunctionResult> RunAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly, JsonObject? console)
+    private async Task<FunctionResult> RunAsync(string name, JsonNode? arg, FunctionCaller caller, CancellationToken ct, string? kind, bool readOnly)
     {
         if (_current is null) await RefreshAsync(ct);
         var d = _current;
@@ -450,9 +433,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         var context = new JsonObject
         {
             ["functionName"] = name,
-            ["readOnly"] = readOnly,
             ["auth"] = caller.Uid is null ? null : new JsonObject { ["uid"] = caller.Uid, ["token"] = JsonSerializer.SerializeToNode(caller.Token ?? new Dictionary<string, object?>()) },
-            ["console"] = console,
             ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };
         var watch = Stopwatch.StartNew();

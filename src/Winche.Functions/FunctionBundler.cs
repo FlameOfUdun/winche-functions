@@ -23,7 +23,21 @@ public sealed class FunctionBundler(FunctionsOptions options)
         return problems;
     }
 
-    public async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct)
+    private Task<string>? _adminForBrowser;
+
+    /// <summary>
+    /// @winche/admin as one JavaScript module for browsers (console pages import it), bundled once per process.
+    /// </summary>
+    public Task<string> AdminForBrowserAsync(CancellationToken ct)
+    {
+        var task = _adminForBrowser ??= BundleAsync(new Dictionary<string, string> { ["index.ts"] = "export * from \"@winche/admin\";\n" }, CancellationToken.None, browser: true);
+        if (task.IsFaulted || task.IsCanceled) _adminForBrowser = null;   // tried again next time
+        return task.WaitAsync(ct);
+    }
+
+    public Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct) => BundleAsync(files, ct, browser: false);
+
+    private async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct, bool browser)
     {
         if (Problems(files) is { Count: > 0 } problems) throw new FunctionDeployException("These files can't be deployed.", problems);
         var dir = Path.Combine(DenoRuntime.WorkFolder("builds"), Guid.NewGuid().ToString("N"));
@@ -46,7 +60,7 @@ public sealed class FunctionBundler(FunctionsOptions options)
 
             var entry = Entries.First(files.ContainsKey);
             var info = new ProcessStartInfo(DenoRuntime.Locate(options)) { WorkingDirectory = dir, RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
-            foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
+            foreach (var a in new[] { "bundle", "--quiet", "--platform", browser ? "browser" : "deno", "--config", "deno.json", entry, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             using var process = System.Diagnostics.Process.Start(info)!;
