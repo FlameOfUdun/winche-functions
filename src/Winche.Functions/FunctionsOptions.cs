@@ -11,6 +11,13 @@ public sealed class FunctionsOptions
     /// <summary>Deno's download cache for npm: and jsr: imports (default: a folder under the temp folder).</summary>
     public string? CachePath { get; set; }
 
+    /// <summary>
+    /// Packages this server provides to deployments that import them without saying where from (deno.json doesn't name
+    /// them): package name (e.g. <c>@winche/admin</c>) → a folder with its package.json and built files. For servers
+    /// that can't reach npm, and tests. Empty by default: a deployment names its packages itself.
+    /// </summary>
+    public Dictionary<string, string> ProvidedPackages { get; } = new(StringComparer.Ordinal);
+
     /// <summary>How many functions may run at once on this server (default 16); more wait their turn.</summary>
     public int MaxConcurrency { get; set; } = 16;
 

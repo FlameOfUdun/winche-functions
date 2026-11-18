@@ -27,9 +27,13 @@ public static partial class OldApi
     public static IReadOnlyList<string> Problems(IReadOnlyDictionary<string, string> files)
     {
         var problems = new List<string>();
+        // Packages carried in the folder (a copy of an SDK, say) aren't the project's code.
+        var packages = files.Keys.Where(k => k == "package.json" || k.EndsWith("/package.json", StringComparison.Ordinal))
+            .Select(k => k[..^"package.json".Length]).ToList();
         foreach (var (name, text) in files.OrderBy(f => f.Key, StringComparer.Ordinal))
         {
-            if (!(name.EndsWith(".ts") || name.EndsWith(".tsx") || name.EndsWith(".js") || name.EndsWith(".mjs")) || name.StartsWith(".winche/", StringComparison.Ordinal)) continue;
+            if (!(name.EndsWith(".ts") || name.EndsWith(".tsx") || name.EndsWith(".js") || name.EndsWith(".mjs")) || name.StartsWith(".winche/", StringComparison.Ordinal)
+                || name.EndsWith(".d.ts", StringComparison.Ordinal) || packages.Any(p => p.Length > 0 && name.StartsWith(p, StringComparison.Ordinal))) continue;
             foreach (var (pattern, instead) in Uses)
                 foreach (Match m in pattern.Matches(text))
                 {

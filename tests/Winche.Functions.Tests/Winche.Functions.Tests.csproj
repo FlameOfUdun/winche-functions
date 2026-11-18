@@ -27,6 +27,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Sdk\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="SdkPackages\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

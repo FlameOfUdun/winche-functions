@@ -212,6 +212,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             throw new FunctionDeployException("Some resources haven't been sent.", [.. resources.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"resources/{a.Key}").Take(20)]);
         if (OldApi.Problems(files) is { Count: > 0 } old)
             throw new FunctionDeployException("This code uses the functions API from before @winche/admin.", old);
+        if (bundler.MissingPackages(files) is { Count: > 0 } unnamed)
+            throw new FunctionDeployException("The code imports packages its deno.json doesn't name.", unnamed);
         var bundle = await bundler.BundleAsync(files, ct);
         var check = $"check-{Guid.NewGuid():N}";
         JsonArray found;
@@ -242,6 +244,11 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         foreach (var node in found.OfType<JsonObject>())
         {
             var name = node["name"]!.GetValue<string>();
+            if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol)
+            {
+                problems.Add($"{name}: written with an @winche/functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche/functions {FunctionsSdk.Major}.x).");
+                continue;
+            }
             var t = node["trigger"] as JsonObject ?? [];
             var trigger = new FunctionTrigger(t["kind"]?.GetValue<string>() ?? "", (t["events"] as JsonArray)?.Select(e => e!.GetValue<string>()).ToList(),
                 t["path"]?.GetValue<string>(), t["cron"]?.GetValue<string>(), t["timeZone"]?.GetValue<string>(), t["on"]?.GetValue<string>());

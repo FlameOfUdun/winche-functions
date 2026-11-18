@@ -29,10 +29,27 @@ export const nightly = schedule("0 2 * * *", async () => {
 }, { timeZone: "Europe/London", timeoutSeconds: 300 });
 ```
 
-Two modules: **`@winche/functions`** defines functions (triggers, callables, HTTP functions, schedules, pages), their
-`ctx` (the call: `name`, `caller`, `log`), secrets and resources; **`@winche/admin`** is the project's data
-(documents, files, the app's users, assets, calling functions), the same SDK console pages and other servers use. In
-functions it acts with the server's rights.
+Two npm packages, which the project pins itself in its `deno.json` (`winche functions init` writes it):
+**`@winche/functions`** defines functions (triggers, callables, HTTP functions, schedules, pages), their `ctx` (the
+call: `name`, `caller`, `log`), secrets and resources; **`@winche/admin`** is the project's data (documents, files, the
+app's users, assets, calling functions), the same SDK console pages and other servers use. In functions it acts with
+the server's rights. Each has its own repository (winche-functions-typescript-sdk, winche-admin-typescript-sdk, MIT).
+
+```json
+{
+  "imports": {
+    "@winche/functions": "npm:@winche/functions@^3",
+    "@winche/functions/testing": "npm:@winche/functions@^3/testing",
+    "@winche/admin": "npm:@winche/admin@^3"
+  }
+}
+```
+
+The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without
+naming it is refused, saying what to add. A server that can't reach npm (or a test) can provide them:
+`FunctionsOptions.ProvidedPackages["@winche/admin"] = folder` (the package's `package.json` and built files), used only
+where `deno.json` doesn't name the package. **Protocol:** the SDKs speak protocol 1 with this server; a function or
+call for another is refused, saying which version to use.
 
 | Package | |
 | --- | --- |
@@ -276,8 +293,7 @@ have no rules for app users and refuse `as(user)`.
 The same SDK works outside functions: in a console page it acts as the person who opened the page (see Console
 pages); anywhere else `initializeAdmin({ server, project, token })` acts as the token's account. Either way their role
 in the project limits it: a viewer reads; a member also writes documents, files and the app's users; an admin may also
-call functions. The SDK has its own repository, winche-admin-typescript-sdk (the npm package `@winche/admin`, MIT);
-this one carries a pinned copy (`scripts/update-admin-sdk.sh`).
+call functions. A page brings its own copy, like any dependency (a bundler, or the built file in the page's folder).
 
 ## Resources
 
@@ -399,8 +415,8 @@ export const reports = pages({ title: "Reports", files: "console/reports", icon:
 ```
 
 ```js
-// console/reports/app.js — the console resolves @winche/admin for the page.
-import { documents } from "@winche/admin";
+// console/reports/app.js — the page's own copy of @winche/admin (or bundled with it).
+import { documents } from "./admin.js";
 
 const visits = await documents.collection("visits").where("at", ">=", weeksAgo(4)).count();
 document.querySelector("#count").textContent = `${visits} in the last 4 weeks`;
@@ -426,8 +442,9 @@ document.querySelector("#close").onclick = async () => {
   scripts, styles, images and fonts come from its own folder (or inline); it can't fetch from the network
   (`connect-src 'none'`). Links it opens go to a new tab. If it navigates the frame elsewhere, it's disconnected and
   asks to be reloaded.
-- **Built pages:** a bundler leaves `@winche/admin` out (Vite: `build.rollupOptions.external: ["@winche/admin"]`,
-  `base: "./"`); the CLI builds pages named in `winche.json` (`"pages"`) when it deploys.
+- **The SDK is the page's:** bundle `@winche/admin` with the page (Vite: `base: "./"`), or put its built file in the
+  page's folder and import it from there; the console gives a page only the channel the SDK finds by itself. The CLI
+  builds pages named in `winche.json` (`"pages"`) when it deploys.
 - **Files:** `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.svg`, `.txt`, `.png`, `.jpg`, `.gif`, `.webp`, `.ico`,
   `.woff`, `.woff2`, deployed with `winche functions deploy` (images and fonts as base64). They're versioned and
   rolled back with the functions.
@@ -488,8 +505,8 @@ refused, naming each use and what replaces it.
 
 New: `as(user)` (the access rules applied for one of the app's users), `functions.call`, `@winche/functions/testing`
 (`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche/admin` npm package for other servers
-(its own repository, winche-admin-typescript-sdk).
-`winche functions init` (CLI 3) writes the three modules and their import names into `deno.json`.
+(its own repository, winche-admin-typescript-sdk). The SDKs are npm packages the project pins in `deno.json`
+(`winche functions init`, CLI 3, writes it); the server no longer brings them.
 
 ## Upgrading to 2.0
 
@@ -517,6 +534,5 @@ New: `as(user)` (the access rules applied for one of the app's users), `function
 
 ## License
 
-Elastic License 2.0 (`LICENSE`), except `src/Winche.Functions/Runtime/admin.ts`: the admin SDK (`@winche/admin`), a
-pinned copy from its own repository, winche-admin-typescript-sdk (MIT). `scripts/update-admin-sdk.sh` updates it and
-records the commit in `Runtime/admin-sdk.json`.
+Elastic License 2.0 (`LICENSE`). The TypeScript SDKs functions are written with are MIT, in their own repositories;
+the tests carry built copies (`scripts/update-test-packages.sh`).

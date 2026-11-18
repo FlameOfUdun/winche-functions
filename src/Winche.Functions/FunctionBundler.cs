@@ -23,21 +23,25 @@ public sealed class FunctionBundler(FunctionsOptions options)
         return problems;
     }
 
-    private Task<string>? _adminForBrowser;
+    private static readonly Regex WincheImport = new(@"(?:from|import)\s*\(?\s*[""'](@winche/(?:functions|admin))(?:/[^""']*)?[""']");
 
     /// <summary>
-    /// @winche/admin as one JavaScript module for browsers (console pages import it), bundled once per process.
+    /// Packages the code imports by name that its deno.json doesn't map and the server doesn't provide: what to add, in a
+    /// sentence each.
     /// </summary>
-    public Task<string> AdminForBrowserAsync(CancellationToken ct)
+    public IReadOnlyList<string> MissingPackages(IReadOnlyDictionary<string, string> files)
     {
-        var task = _adminForBrowser ??= BundleAsync(new Dictionary<string, string> { ["index.ts"] = "export * from \"@winche/admin\";\n" }, CancellationToken.None, browser: true);
-        if (task.IsFaulted || task.IsCanceled) _adminForBrowser = null;   // tried again next time
-        return task.WaitAsync(ct);
+        var imports = ImportsOf(files);
+        var used = files.Where(f => f.Key.EndsWith(".ts") || f.Key.EndsWith(".js") || f.Key.EndsWith(".mjs") || f.Key.EndsWith(".tsx"))
+            .SelectMany(f => WincheImport.Matches(f.Value).Select(m => m.Groups[1].Value)).ToHashSet();
+        return [.. used.Where(name => !imports.ContainsKey(name) && !options.ProvidedPackages.ContainsKey(name)).Order()
+            .Select(name => $"The code imports {name}, which deno.json doesn't name: add \"{name}\": \"{FunctionsSdk.Packages.First(p => p.Name == name).Specifier}\" to its imports.")];
     }
 
-    public Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct) => BundleAsync(files, ct, browser: false);
+    private static JsonObject ImportsOf(IReadOnlyDictionary<string, string> files) =>
+        (files.TryGetValue("deno.json", out var json) ? JsonNode.Parse(json, documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject : null)?["imports"] as JsonObject ?? [];
 
-    private async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct, bool browser)
+    public async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct)
     {
         if (Problems(files) is { Count: > 0 } problems) throw new FunctionDeployException("These files can't be deployed.", problems);
         var dir = Path.Combine(DenoRuntime.WorkFolder("builds"), Guid.NewGuid().ToString("N"));
@@ -50,17 +54,22 @@ public sealed class FunctionBundler(FunctionsOptions options)
                 await File.WriteAllTextAsync(path, text, ct);
             }
             Directory.CreateDirectory(Path.Combine(dir, ".winche"));
-            foreach (var (module, _) in FunctionsSdk.Modules)
-                await File.WriteAllTextAsync(Path.Combine(dir, ".winche", module), DenoRuntime.Resource(module), ct);
-            // Their deno.json (import map, npm versions) with @winche/functions and @winche/admin pointed at the SDK.
+            // Their deno.json (import map, npm versions), with the packages the server provides for names it doesn't map.
             var config = files.TryGetValue("deno.json", out var json) ? JsonNode.Parse(json, documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject ?? [] : [];
             if (config["imports"] is not JsonObject imports) config["imports"] = imports = [];
-            foreach (var (module, specifier) in FunctionsSdk.Modules) imports[specifier] = $"./.winche/{module}";
+            foreach (var (name, folder) in options.ProvidedPackages)
+            {
+                if (imports.ContainsKey(name)) continue;
+                var target = Path.Combine(dir, ".winche", "packages", name);
+                CopyFolder(folder, target);
+                foreach (var (subpath, file) in Exports(folder))
+                    if (!imports.ContainsKey(name + subpath)) imports[name + subpath] = $"./.winche/packages/{name}/{file}";
+            }
             await File.WriteAllTextAsync(Path.Combine(dir, "deno.json"), config.ToJsonString(), ct);
 
             var entry = Entries.First(files.ContainsKey);
             var info = new ProcessStartInfo(DenoRuntime.Locate(options)) { WorkingDirectory = dir, RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
-            foreach (var a in new[] { "bundle", "--quiet", "--platform", browser ? "browser" : "deno", "--config", "deno.json", entry, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
+            foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             using var process = System.Diagnostics.Process.Start(info)!;
@@ -83,6 +92,37 @@ public sealed class FunctionBundler(FunctionsOptions options)
         finally
         {
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>A package's entry points from its package.json exports: subpath ("" or "/testing") → file, relative to it.</summary>
+    private static IEnumerable<(string Subpath, string File)> Exports(string folder)
+    {
+        var pkg = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "package.json"))) as JsonObject ?? [];
+        static string? Target(JsonNode? n) => n switch
+        {
+            JsonValue v => v.GetValue<string>(),
+            JsonObject o => Target(o["import"]) ?? Target(o["default"]),
+            _ => null,
+        };
+        if (pkg["exports"] is JsonObject exports && exports.Any(e => e.Key.StartsWith('.')))
+        {
+            foreach (var (key, value) in exports)
+                if (Target(value) is { } file) yield return (key == "." ? "" : key[1..], file.TrimStart('.', '/'));
+        }
+        else if ((Target(pkg["exports"]) ?? pkg["module"]?.GetValue<string>() ?? pkg["main"]?.GetValue<string>()) is { } main)
+            yield return ("", main.TrimStart('.', '/'));
+    }
+
+    private static void CopyFolder(string from, string to)
+    {
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(from, file);
+            if (rel.Split(Path.DirectorySeparatorChar).Contains("node_modules")) continue;
+            var dest = Path.Combine(to, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(file, dest, overwrite: true);
         }
     }
 }

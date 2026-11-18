@@ -92,6 +92,7 @@ const context = (c, run) => ({
   log: (...a) => console.log(...a),
 });
 const stateOf = (c, run) => ({
+  protocol: 1,   // what @winche/admin checks it speaks
   call: callFor(run),
   name: c.functionName,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),
@@ -120,12 +121,12 @@ self.onmessage = async (m) => {
     if (d.t === "analyze") {
       const list = [];
       for (const [name, v] of Object.entries(mod))
-        if (v && v.__winche === 1) list.push({ name, trigger: v.trigger, options: v.options ?? {} });
+        if (v && typeof v.__winche === "number") list.push({ name, protocol: v.__winche, trigger: v.trigger, options: v.options ?? {} });
       done({ result: list });
       return;
     }
     const fn = mod[d.name];
-    if (!fn || fn.__winche !== 1) throw Object.assign(new Error("There's no function " + d.name + " in this deployment."), { code: "not-found" });
+    if (!fn || typeof fn.__winche !== "number") throw Object.assign(new Error("There's no function " + d.name + " in this deployment."), { code: "not-found" });
     if (fn.trigger.kind === "http") {
       // A standard Request in, a standard Response (or text, or JSON) out.
       const a = d.arg;

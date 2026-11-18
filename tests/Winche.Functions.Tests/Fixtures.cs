@@ -130,6 +130,9 @@ public sealed class FunctionsApp : IAsyncDisposable
         {
             o.ConnectionString = db;
             o.DenoPath = Deno.Path;
+            // The SDKs (built from their repositories by scripts/update-test-packages.sh), for code that doesn't name them.
+            foreach (var name in new[] { "functions", "admin" })
+                o.ProvidedPackages[$"@winche/{name}"] = System.IO.Path.Combine(AppContext.BaseDirectory, "SdkPackages", "@winche", name);
             o.SyncInterval = TimeSpan.FromMilliseconds(300);
             o.MaxTimeout = TimeSpan.FromMinutes(20);   // a server allowing longer runs than the default
             o.UseSettings();
