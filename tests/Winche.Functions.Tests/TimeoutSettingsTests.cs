@@ -14,12 +14,12 @@ public class TimeoutSettingsTests(PostgresFixture pg)
         var d = await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, schedule, documents } from "@winche/functions";
+                import { callable, schedule, onDocument } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const quick = callable(async () => 1);
                 export const report = callable(async () => 1, { timeoutSeconds: 300 });
                 export const spin = callable(async () => { while (true) {} }, { timeoutSeconds: 600 });
                 export const nightly = schedule("0 2 * * *", async () => {}, { timeoutSeconds: 1200 });
-                export const check = documents.beforeWrite("x/{id}", async () => {}, { timeoutSeconds: 10 });
+                export const check = onDocument.willBeWritten("x/{id}", async () => {}, { timeoutSeconds: 10 });
                 """,
         }, "Times", "admin@x");
         int Time(string name) => functions.TimeoutFor(d.Functions.Single(f => f.Name == name));
@@ -28,7 +28,7 @@ public class TimeoutSettingsTests(PostgresFixture pg)
         // Too long for this server: refused at deploy.
         var tooLong = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(new Dictionary<string, string>
         {
-            ["index.ts"] = """import { callable } from "@winche/functions"; export const x = callable(async () => 1, { timeoutSeconds: 1201 });""",
+            ["index.ts"] = """import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; export const x = callable(async () => 1, { timeoutSeconds: 1201 });""",
         }, null, null));
         Assert.Contains(tooLong.Problems, p => p.StartsWith("x: timeoutSeconds is 1 to 1200"));
 

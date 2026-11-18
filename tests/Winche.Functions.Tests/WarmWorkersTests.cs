@@ -7,7 +7,7 @@ namespace Winche.Functions.Tests;
 public class WarmWorkersTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { callable } from "@winche/functions";
+        import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
 
         // Kept at the top of the module: it lasts as long as the worker.
         let runs = 0;
@@ -16,11 +16,11 @@ public class WarmWorkersTests(PostgresFixture pg)
 
         // Returns at once, then writes after it has answered: that write must not happen as part of a later run.
         export const leaky = callable(async (_d, ctx) => {
-          setTimeout(() => { ctx.documents.doc("leaks/late").set({ by: "a finished run" }).catch(() => {}); }, 300);
+          setTimeout(() => { admin.documents.doc("leaks/late").set({ by: "a finished run" }).catch(() => {}); }, 300);
           return "answered";
         });
 
-        export const leaked = callable(async (_d, ctx) => (await ctx.documents.doc("leaks/late").get()).exists);
+        export const leaked = callable(async (_d, ctx) => (await admin.documents.doc("leaks/late").get()).exists);
 
         export const slow = callable(async () => { await new Promise((r) => setTimeout(r, 10_000)); return "never"; }, { timeoutSeconds: 1 });
         """;

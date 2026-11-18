@@ -18,10 +18,10 @@ public class QueryTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions";
+                import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const pages = callable(async (_d, ctx) => {
                   const names: string[][] = [];
-                  const jobs = ctx.documents.collection("jobs");
+                  const jobs = admin.documents.collection("jobs");
                   let page = await jobs.limit(3).get();
                   while (!page.empty) {
                     names.push(page.docs.map((d) => d.id));
@@ -50,9 +50,9 @@ public class QueryTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, FieldValue, type WriteBatch } from "@winche/functions";
+                import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; import { FieldValue, type WriteBatch } from "@winche/admin";
                 export const run = callable(async (_d, ctx) => {
-                  const db = ctx.documents;
+                  const db = admin.documents;
                   await db.doc("queue/q1").set({ n: 1 });
                   const read = await db.doc("queue/q1").get();
                   const codes: string[] = [];

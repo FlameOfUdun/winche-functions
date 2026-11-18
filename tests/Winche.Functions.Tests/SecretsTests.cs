@@ -16,23 +16,27 @@ public class SecretsTests(PostgresFixture pg)
         var secrets = app.Service<FunctionSecrets>();
 
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(Code("""
-            import { callable } from "@winche/functions";
-            export const a = callable(async () => 1, { secrets: ["ses-key"] });
-            export const b = callable(async () => 1, { secrets: "SES_KEY" as any });
+            import { callable, secrets } from "@winche/functions";
+            export const a = callable(async () => 1, { secrets: [secrets.define("ses-key")] });
             """), null, null));
-        Assert.Contains(bad.Problems, p => p.StartsWith("a: 'ses-key' isn't a secret name"));
-        Assert.Contains(bad.Problems, p => p.StartsWith("b: secrets is a list of names"));
+        Assert.Contains(bad.Problems, p => p.Contains("'ses-key' isn't a secret name"));
+        bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(Code("""
+            import { callable } from "@winche/functions";
+            export const b = callable(async () => 1, { secrets: ["SES_KEY"] as any });
+            """), null, null));
+        Assert.Contains(bad.Problems, p => p.Contains("'SES_KEY' is a name; give its handle"));
 
         var d = await functions.DeployAsync(Code("""
-            import { callable } from "@winche/functions";
+            import { callable, secrets } from "@winche/functions";
+            const sesKey = secrets.define("SES_KEY"), sesRegion = secrets.define("SES_REGION");
             export const send = callable(async (_d, ctx) => {
-              const key = ctx.secrets.get("SES_KEY");
-              console.log("using", key, "for", ctx.secrets.has("SES_REGION") ? "a region" : "the default region");
+              const key = sesKey.value();
+              console.log("using", key, "for", sesRegion.isSet() ? "a region" : "the default region");
               return key.length;
-            }, { secrets: ["SES_KEY", "SES_REGION"] });
-            export const unset = callable(async (_d, ctx) => ctx.secrets.get("SES_REGION"), { secrets: ["SES_REGION"] });
-            export const undeclared = callable(async (_d, ctx) => ctx.secrets.get("SES_KEY"));
-            export const leak = callable(async (_d, ctx) => { throw new Error("bad key " + ctx.secrets.get("SES_KEY")); }, { secrets: ["SES_KEY"] });
+            }, { secrets: [sesKey, sesRegion] });
+            export const unset = callable(async (_d, ctx) => sesRegion.value(), { secrets: [sesRegion] });
+            export const undeclared = callable(async (_d, ctx) => sesKey.value());
+            export const leak = callable(async (_d, ctx) => { throw new Error("bad key " + sesKey.value()); }, { secrets: [sesKey] });
             """), "Secrets", "admin@x");
         Assert.Equal(["SES_KEY", "SES_REGION"], d.Functions.Single(f => f.Name == "send").Secrets);
 
@@ -52,7 +56,7 @@ public class SecretsTests(PostgresFixture pg)
         var leak = await functions.InvokeAsync("leak", null, FunctionCaller.Server);
         Assert.Equal("bad key ••••", leak.ErrorMessage);
 
-        Assert.Contains("doesn't declare the secret SES_KEY", (await functions.InvokeAsync("undeclared", null, FunctionCaller.Server)).ErrorMessage);
+        Assert.Contains("doesn't list the secret SES_KEY", (await functions.InvokeAsync("undeclared", null, FunctionCaller.Server)).ErrorMessage);
         Assert.Contains("isn't set", (await functions.InvokeAsync("unset", null, FunctionCaller.Server)).ErrorMessage);
 
         // Kept encrypted in Winche.Core's store, never readable through the listing.

@@ -13,27 +13,27 @@ public class FileAccessTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, files } from "@winche/functions";
+                import { callable, onFile } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const make = callable(async (_d, ctx) => {
                   const bytes = new Uint8Array(70000).map((_, i) => i % 251);
-                  const week = ctx.files.child("reports/u1").child("week.pdf");
+                  const week = admin.files.child("reports/u1").child("week.pdf");
                   const pdf = await week.putData(bytes, { mimeType: "application/pdf", metadata: { week: 46 }, contentDisposition: 'attachment; filename="week.pdf"' });
-                  await ctx.files.child("notes/u1.txt").putData("héllo");
+                  await admin.files.child("notes/u1.txt").putData("héllo");
                   const back = await week.getData();
                   const same = back!.length === bytes.length && back!.every((b, i) => b === bytes[i]);
                   const link = await week.downloadUrl();
                   const updated = await week.updateMetadata({ week: null, checked: true }, { cacheControl: "private" });
-                  const folder = await ctx.files.child("reports").list();
-                  const all = await ctx.files.child("reports/u1").listChildren();
-                  return { size: pdf.data!.sizeBytes, type: pdf.data!.mimeType, week: pdf.data!.metadata.week, same, text: await ctx.files.child("notes/u1.txt").getText(),
-                           record: (await ctx.files.child("notes/u1.txt").getSnapshot()).data?.mimeType, none: await ctx.files.child("nope.txt").getData(),
-                           missing: (await ctx.files.child("nope.txt").getSnapshot()).exists, name: week.name, parent: week.parent?.path,
+                  const folder = await admin.files.child("reports").list();
+                  const all = await admin.files.child("reports/u1").listChildren();
+                  return { size: pdf.data!.sizeBytes, type: pdf.data!.mimeType, week: pdf.data!.metadata.week, same, text: await admin.files.child("notes/u1.txt").getText(),
+                           record: (await admin.files.child("notes/u1.txt").getSnapshot()).data?.mimeType, none: await admin.files.child("nope.txt").getData(),
+                           missing: (await admin.files.child("nope.txt").getSnapshot()).exists, name: week.name, parent: week.parent?.path,
                            link: { url: link.url, expiresAt: link.expiresAt.toISOString() }, meta: updated.data!.metadata, cache: updated.data!.cacheControl,
                            folders: folder.folders.map((f) => f.path), files: all.files.map((f) => f.reference.name) };
                 });
-                export const missingLink = callable(async (_d, ctx) => ctx.files.child("nope.pdf").downloadUrl());
-                export const onReport = files.onUploaded("reports/{uid}/{name}", async (e, ctx) => {
-                  await ctx.documents.doc(`seen/${e.params.uid}`).set({ name: e.params.name, size: e.file.data?.sizeBytes ?? 0 });
+                export const missingLink = callable(async (_d, ctx) => admin.files.child("nope.pdf").downloadUrl());
+                export const onReport = onFile.uploaded("reports/{uid}/{name}", async (e, ctx) => {
+                  await admin.documents.doc(`seen/${e.params.uid}`).set({ name: e.params.name, size: e.file.data?.sizeBytes ?? 0 });
                 });
                 """,
         }, "Files", "admin@x");
@@ -71,13 +71,13 @@ public class FileAccessTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, documents } from "@winche/functions";
-                export const seed = callable(async (_d, ctx) => { await ctx.files.child("limits.txt").putData("3"); });
-                export const check = documents.beforeWrite("orders/{id}", async (_e, ctx) => {
-                  if (Number(await ctx.files.child("limits.txt").getText()) !== 3) throw new Error("couldn't read the limit");
+                import { callable, onDocument } from "@winche/functions"; import * as admin from "@winche/admin";
+                export const seed = callable(async (_d, ctx) => { await admin.files.child("limits.txt").putData("3"); });
+                export const check = onDocument.willBeWritten("orders/{id}", async (_e, ctx) => {
+                  if (Number(await admin.files.child("limits.txt").getText()) !== 3) throw new Error("couldn't read the limit");
                   return { set: { limit: 3 } };
                 });
-                export const sneaky = documents.beforeWrite("other/{id}", async (_e, ctx) => { await ctx.files.child("x.txt").putData("no"); });
+                export const sneaky = onDocument.willBeWritten("other/{id}", async (_e, ctx) => { await admin.files.child("x.txt").putData("no"); });
                 """,
         }, "Before", "admin@x");
         Assert.True((await functions.InvokeAsync("seed", null, FunctionCaller.Server)).Ok);

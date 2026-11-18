@@ -6,7 +6,7 @@ using Winche.Storage.Services;
 
 namespace Winche.Functions.Tests;
 
-/// <summary>The SDK's ctx.documents / ctx.files / ctx.auth, shaped like the Dart SDKs.</summary>
+/// <summary>The SDK's admin.documents / admin.files / admin.auth, shaped like the Dart SDKs.</summary>
 [Collection("postgres")]
 public class ApiTests(PostgresFixture pg)
 {
@@ -18,9 +18,9 @@ public class ApiTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, documents, FieldValue, Filter, Aggregate, GeoPoint, Link } from "@winche/functions";
+                import { callable, onDocument } from "@winche/functions"; import * as admin from "@winche/admin"; import { FieldValue, Filter, Aggregate, GeoPoint, Link } from "@winche/admin";
                 export const run = callable(async (_d, ctx) => {
-                  const db = ctx.documents;
+                  const db = admin.documents;
                   const orders = db.collection("shops/s1/orders");
                   await orders.doc("o1").set({ amount: 10, paid: true, tags: ["a"] });
                   await orders.doc("o2").set({ amount: 30, paid: true, tags: ["a", "b"] });
@@ -43,9 +43,9 @@ public class ApiTests(PostgresFixture pg)
                     parent: added.parent.path, grand: added.parent.parent?.path,
                   };
                 });
-                export const stamped = documents.onCreated("events/{id}", async (e, ctx) => {
+                export const stamped = onDocument.created("events/{id}", async (e, ctx) => {
                   const at = e.data.get("at");
-                  await ctx.documents.doc(`seen/${e.params.id}`).set({ isDate: at instanceof Date, iso: at instanceof Date ? at.toISOString() : null, before: e.before.exists });
+                  await admin.documents.doc(`seen/${e.params.id}`).set({ isDate: at instanceof Date, iso: at instanceof Date ? at.toISOString() : null, before: e.before.exists });
                 });
                 """,
         }, null, null);
@@ -107,18 +107,18 @@ public class ApiTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = $$"""
-                import { callable } from "@winche/functions";
+                import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const copy = callable(async (d: { good: boolean }, ctx) => {
-                  const f = await ctx.files.child("media/clip").putFromUrl("http://127.0.0.1:{{port}}/clip.mp4", { headers: { authorization: d.good ? "Bearer good" : "Bearer bad" }, metadata: { from: "gcs" } });
+                  const f = await admin.files.child("media/clip").putFromUrl("http://127.0.0.1:{{port}}/clip.mp4", { headers: { authorization: d.good ? "Bearer good" : "Bearer bad" }, metadata: { from: "gcs" } });
                   return { size: f.data!.sizeBytes, type: f.data!.mimeType, from: f.data!.metadata.from };
                 });
                 export const claims = callable(async (d: { uid: string }, ctx) => {
-                  const user = ctx.auth.user(d.uid);
+                  const user = admin.auth.user(d.uid);
                   await user.setCustomClaims({ ...(await user.getCustomClaims()), role: "admin" });
                   const snap = await user.get();
-                  const nobody = await ctx.auth.user("nobody").get();
+                  const nobody = await admin.auth.user("nobody").get();
                   let missing = "";
-                  try { await ctx.auth.user("nobody").getCustomClaims(); } catch (e) { missing = (e as { code: string }).code; }
+                  try { await admin.auth.user("nobody").getCustomClaims(); } catch (e) { missing = (e as { code: string }).code; }
                   return { exists: snap.exists, email: snap.data?.email, role: snap.customClaims.role, created: snap.data?.createdAt instanceof Date, nobody: nobody.exists, missing };
                 });
                 """,

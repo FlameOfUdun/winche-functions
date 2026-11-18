@@ -8,24 +8,25 @@ namespace Winche.Functions.Tests;
 public class HttpFunctionsTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { http, HttpsError } from "@winche/functions";
+        import { http, HttpsError, secrets } from "@winche/functions"; import * as admin from "@winche/admin";
+        const hookSecret = secrets.define("HOOK_SECRET");
 
         // Another service's webhook: checks its signature with a secret, then records the event.
         export const providerEvents = http.onRequest(async (req, ctx) => {
           const body = await req.text();
-          const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(ctx.secrets.get("HOOK_SECRET")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+          const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(hookSecret.value()), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
           const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
           const expected = [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
           if (req.headers.get("x-signature") !== expected) return new Response("bad signature", { status: 401 });
           const event = JSON.parse(body);
-          await ctx.documents.doc(`events/${event.id}`).set({ type: event.type, user: event.userId });
+          await admin.documents.doc(`events/${event.id}`).set({ type: event.type, user: event.userId });
           return { ok: true };
-        }, { methods: ["POST"], secrets: ["HOOK_SECRET"] });
+        }, { methods: ["POST"], secrets: [hookSecret] });
 
         // A link in an email: /functions/v1/http/report/<token> sends the browser on.
         export const report = http.onRequest(async (req, ctx) => {
           const token = new URL(req.url).pathname.split("/").pop();
-          const doc = await ctx.documents.doc(`links/${token}`).get();
+          const doc = await admin.documents.doc(`links/${token}`).get();
           if (!doc.exists) throw new HttpsError("not-found", "This link has ended.");
           return Response.redirect(String(doc.get("to")), 302);
         }, { methods: ["GET"] });

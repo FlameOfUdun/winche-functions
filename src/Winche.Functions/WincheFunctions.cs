@@ -201,7 +201,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
 
     /// <summary>
     /// Bundles and checks <paramref name="files"/>, then makes them the deployment in force, with <paramref name="resources"/>
-    /// (stored beforehand with <see cref="PutResourceAsync"/>) as its ctx.resources.
+    /// (stored beforehand with <see cref="PutResourceAsync"/>) as its resources.
     /// </summary>
     public async Task<Deployment> DeployAsync(IReadOnlyDictionary<string, string> files, string? note, string? by, CancellationToken ct = default, int? rolledBackFrom = null,
         IReadOnlyDictionary<string, ResourceEntry>? resources = null)
@@ -210,6 +210,8 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         if (ResourceProblems(resources) is { Count: > 0 } bad) throw new FunctionDeployException("These resources can't be deployed.", bad);
         if (await store.MissingResourcesAsync([.. resources.Values.Select(a => a.Hash)], ct) is { Count: > 0 } missing)
             throw new FunctionDeployException("Some resources haven't been sent.", [.. resources.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"resources/{a.Key}").Take(20)]);
+        if (OldApi.Problems(files) is { Count: > 0 } old)
+            throw new FunctionDeployException("This code uses the functions API from before @winche/admin.", old);
         var bundle = await bundler.BundleAsync(files, ct);
         var check = $"check-{Guid.NewGuid():N}";
         JsonArray found;
@@ -431,16 +433,11 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         catch (SecretReferenceException unreadable) { return FunctionResult.Failed("failed-precondition", unreadable.Message); }   // e.g. AWS refused: the reason, never a value
         var hidden = secretValues.Values.OfType<string>().ToList();
         string Hide(string text) => hidden.Count == 0 ? text : FunctionSecrets.Hide(text, hidden);
-        var bindings = services.GetServices<IFunctionBinding>().ToList();
         async Task<JsonNode?> Bridge(string op, JsonObject args)
         {
-            var dot = op.IndexOf('.');
-            var binding = bindings.FirstOrDefault(b => b.Name == op[..Math.Max(dot, 0)])
-                ?? throw new FunctionCallException("unavailable", $"ctx.{(dot > 0 ? op[..dot] : op)} isn't available in this app.");
-            if (readOnly && op is not ("db.get" or "db.getAll" or "db.query" or "db.count" or "db.aggregate" or "files.list" or "files.page" or "files.get" or "files.read" or "users.get"))
-                throw new FunctionCallException("failed-precondition", $"ctx.{op} can't change anything in a before-function.");
-            await using var scope = services.CreateAsyncScope();
-            return await binding.CallAsync(op[(dot + 1)..], args, scope.ServiceProvider, ct);
+            if (readOnly && !AdminOps.IsRead(op))
+                throw new FunctionCallException("failed-precondition", $"@winche/admin can't change anything in a before-function ({op}): it would run outside the write being checked. Use a trigger (onDocument.created, …).");
+            return await AdminOps.RunAsync(services, op, args, ct);
         }
         void Log(string level, string message)
         {

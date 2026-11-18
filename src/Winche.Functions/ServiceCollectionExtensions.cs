@@ -32,6 +32,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DenoRuntime>();
         services.AddSingleton<WincheFunctions>();
         services.AddSingleton<BeforeFunctions>();
+        services.AddScoped<AdminCaller>();
+        services.AddSingleton<IFunctionBinding, FunctionsCallBinding>();
         services.AddSingleton<IHookProvider, FunctionHooks>();
         services.AddSingleton<IWincheAction, RunFunctionAction>();
         services.AddSingleton(new WincheChangeSource("schedule", "Schedules", [], HasPaths: false, Variables: [], Internal: true));

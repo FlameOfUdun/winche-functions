@@ -36,11 +36,12 @@ public sealed class FunctionBundler(FunctionsOptions options)
                 await File.WriteAllTextAsync(path, text, ct);
             }
             Directory.CreateDirectory(Path.Combine(dir, ".winche"));
-            await File.WriteAllTextAsync(Path.Combine(dir, ".winche", "functions.ts"), DenoRuntime.Resource("functions.ts"), ct);
-            // Their deno.json (import map, npm versions) with @winche/functions pointed at the SDK.
+            foreach (var (module, _) in FunctionsSdk.Modules)
+                await File.WriteAllTextAsync(Path.Combine(dir, ".winche", module), DenoRuntime.Resource(module), ct);
+            // Their deno.json (import map, npm versions) with @winche/functions and @winche/admin pointed at the SDK.
             var config = files.TryGetValue("deno.json", out var json) ? JsonNode.Parse(json, documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject ?? [] : [];
             if (config["imports"] is not JsonObject imports) config["imports"] = imports = [];
-            imports["@winche/functions"] = "./.winche/functions.ts";
+            foreach (var (module, specifier) in FunctionsSdk.Modules) imports[specifier] = $"./.winche/{module}";
             await File.WriteAllTextAsync(Path.Combine(dir, "deno.json"), config.ToJsonString(), ct);
 
             var entry = Entries.First(files.ContainsKey);

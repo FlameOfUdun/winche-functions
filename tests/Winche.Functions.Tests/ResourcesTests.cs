@@ -6,10 +6,10 @@ namespace Winche.Functions.Tests;
 public class ResourcesTests(PostgresFixture pg)
 {
     private const string Index = """
-        import { callable } from "@winche/functions";
-        export const read = callable(async (p: { path: string }, ctx) => ctx.resources.readText(p.path));
-        export const size = callable(async (p: { path: string }, ctx) => (await ctx.resources.read(p.path))?.length ?? null);
-        export const list = callable(async (p: { folder?: string }, ctx) => ({ all: await ctx.resources.list(p?.folder), has: ctx.resources.has("a.txt") }));
+        import { callable, resources } from "@winche/functions";
+        export const read = callable(async (p: { path: string }) => resources.define(p.path).text());
+        export const size = callable(async (p: { path: string }) => (await resources.define(p.path).bytes())?.length ?? null);
+        export const list = callable(async (p: { folder?: string }) => ({ all: await resources.list(p?.folder), has: resources.define("a.txt").exists() }));
         // Only the bundle and the deployment's own resources are readable: not the machine, not other resources.
         export const peek = callable(async (p: { path: string }, ctx) => {
           try { await Deno.readFile(p.path); return "read"; } catch (e) { return (e as Error).name; }

@@ -49,8 +49,8 @@ public class FunctionsTests(PostgresFixture pg)
         Assert.Equal("The code doesn't build.", broken.Message);
 
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(Code("""
-            import { documents, schedule, callable } from "@winche/functions";
-            export const a = documents.onCreated("patients/{id", async () => {});
+            import { onDocument, schedule, callable } from "@winche/functions"; import * as admin from "@winche/admin";
+            export const a = onDocument.created("patients/{id", async () => {});
             export const b = schedule("every day", async () => {});
             export const c = callable(async () => 1, { timeoutSeconds: 9999 });
             """), null, null));
@@ -68,13 +68,13 @@ public class FunctionsTests(PostgresFixture pg)
         var d = await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, HttpsError } from "@winche/functions";
+                import { callable, HttpsError } from "@winche/functions"; import * as admin from "@winche/admin";
                 import { greet } from "./lib/greet.ts";
                 export const hello = callable(async (data: { name: string }, ctx) => {
-                  const person = await ctx.documents.doc(`people/${data.name}`).get();
+                  const person = await admin.documents.doc(`people/${data.name}`).get();
                   if (!person.exists) throw new HttpsError("not-found", `There's no ${data.name}.`);
-                  await ctx.documents.doc(`visits/${data.name}`).set({ at: new Date("2026-11-12T10:00:00Z"), by: ctx.caller?.uid ?? null });
-                  const visits = await ctx.documents.collection("visits").where("by", "==", ctx.caller?.uid ?? null).get();
+                  await admin.documents.doc(`visits/${data.name}`).set({ at: new Date("2026-11-12T10:00:00Z"), by: ctx.caller?.uid ?? null });
+                  const visits = await admin.documents.collection("visits").where("by", "==", ctx.caller?.uid ?? null).get();
                   console.log("greeted", data.name);
                   return { greeting: greet(String(person.get("first"))), age: person.get("age"), role: ctx.caller?.token.role, visits: visits.size };
                 });
@@ -120,14 +120,14 @@ public class FunctionsTests(PostgresFixture pg)
     {
         await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
         await app.Service<WincheFunctions>().DeployAsync(Code("""
-            import { documents, files, users } from "@winche/functions";
-            export const onVisit = documents.onCreated("patients/{patientId}/visits/{visitId}", async (e, ctx) => {
-              await ctx.documents.doc(`audit/${e.params.visitId}`).set({ patient: e.params.patientId, ward: e.data.get("ward") ?? null, type: e.type });
+            import { onDocument, onFile, onUser } from "@winche/functions"; import * as admin from "@winche/admin";
+            export const onVisit = onDocument.created("patients/{patientId}/visits/{visitId}", async (e, ctx) => {
+              await admin.documents.doc(`audit/${e.params.visitId}`).set({ patient: e.params.patientId, ward: e.data.get("ward") ?? null, type: e.type });
             });
-            export const onUpload = files.onUploaded("scans/{rest=**}", async (e, ctx) => {
-              await ctx.documents.doc("audit/upload").set({ path: e.path, rest: e.params.rest, mime: e.file.data?.mimeType ?? null });
+            export const onUpload = onFile.uploaded("scans/{rest=**}", async (e, ctx) => {
+              await admin.documents.doc("audit/upload").set({ path: e.path, rest: e.params.rest, mime: e.file.data?.mimeType ?? null });
             });
-            export const welcome = users.onCreated(async (e, ctx) => {
+            export const welcome = onUser.created(async (e, ctx) => {
               await e.user.reference.setCustomClaims({ role: "newcomer", contact: e.user.data!.email });
             });
             """), null, null);
@@ -164,11 +164,11 @@ public class FunctionsTests(PostgresFixture pg)
     {
         await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
         await app.Service<WincheFunctions>().DeployAsync(Code("""
-            import { users } from "@winche/functions";
-            export const offboard = users.onDisabled(async (e, ctx) => { await ctx.documents.doc(`offboarded/${e.uid}`).set({ email: e.user.data!.email }); });
-            export const erase = users.onDeleted(async (e, ctx) => {
-              await ctx.documents.doc(`erased/${e.uid}`).set({ email: e.user.data!.email });
-              await ctx.documents.doc(`people/${e.uid}`).delete({ cascade: true });
+            import { onUser } from "@winche/functions"; import * as admin from "@winche/admin";
+            export const offboard = onUser.disabled(async (e, ctx) => { await admin.documents.doc(`offboarded/${e.uid}`).set({ email: e.user.data!.email }); });
+            export const erase = onUser.deleted(async (e, ctx) => {
+              await admin.documents.doc(`erased/${e.uid}`).set({ email: e.user.data!.email });
+              await admin.documents.doc(`people/${e.uid}`).delete({ cascade: true });
             });
             """), null, null);
         var db = app.Service<DocumentDatabase>();
@@ -195,18 +195,17 @@ public class FunctionsTests(PostgresFixture pg)
         var db = await pg.NewDatabaseAsync();
         await using var app = await FunctionsApp.StartAsync(db);
         await app.Service<WincheFunctions>().DeployAsync(Code("""
-            import { consoleAction, http, schedule } from "@winche/functions";
+            import { http, schedule } from "@winche/functions"; import * as admin from "@winche/admin";
             let tries = 0;
             // Called, never sent events: a schedule's tick mustn't run them.
-            export const wipe = consoleAction(async (_d, ctx) => { await ctx.documents.doc("state/wrong").set({ by: "wipe" }); });
-            export const hook = http.onRequest(async (_r, ctx) => { await ctx.documents.doc("state/wrong").set({ by: "hook" }); return "ok"; });
+            export const hook = http.onRequest(async (_r, ctx) => { await admin.documents.doc("state/wrong").set({ by: "hook" }); return "ok"; });
             export const tidy = schedule("*/5 * * * *", async (e, ctx) => {
-              const runs = ((await ctx.documents.doc("state/tidy").get()).get("runs") as number) ?? 0;
-              if (runs === 0 && !(await ctx.documents.doc("state/failed").get()).exists) {
-                await ctx.documents.doc("state/failed").set({ once: true });
+              const runs = ((await admin.documents.doc("state/tidy").get()).get("runs") as number) ?? 0;
+              if (runs === 0 && !(await admin.documents.doc("state/failed").get()).exists) {
+                await admin.documents.doc("state/failed").set({ once: true });
                 throw new Error("first try fails");
               }
-              await ctx.documents.doc("state/tidy").set({ runs: runs + 1, scheduledAt: e.scheduledAt });
+              await admin.documents.doc("state/tidy").set({ runs: runs + 1, scheduledAt: e.scheduledAt });
             });
             """), null, null);
         var scheduler = app.Service<FunctionScheduler>();
@@ -227,7 +226,6 @@ public class FunctionsTests(PostgresFixture pg)
         var delivery = Assert.Single(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.tidy"));
         Assert.Equal((2, "delivered"), (delivery.Attempts, delivery.Status));
         Assert.Null(await documents.GetAsync("state/wrong"));
-        Assert.Empty(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.wipe"));
         Assert.Empty(await app.Service<Winche.Webhooks.HookOutbox>().ListAsync("fn.hook"));
     }
 
@@ -236,8 +234,8 @@ public class FunctionsTests(PostgresFixture pg)
     {
         await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
         var functions = app.Service<WincheFunctions>();
-        await functions.DeployAsync(Code("""import { callable } from "@winche/functions"; export const v = callable(() => "one");"""), "One", "a@x");
-        await functions.DeployAsync(Code("""import { callable } from "@winche/functions"; export const v = callable(() => "two");"""), "Two", "a@x");
+        await functions.DeployAsync(Code("""import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; export const v = callable(() => "one");"""), "One", "a@x");
+        await functions.DeployAsync(Code("""import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; export const v = callable(() => "two");"""), "Two", "a@x");
         Assert.Equal("two", (await Call(app, "v", null)).Body["data"]!.GetValue<string>());
         var back = await functions.RollBackAsync(1, null, "a@x");
         Assert.Equal((3, 1, "Back to version 1"), (back.Version, back.RolledBackFrom, back.Note));

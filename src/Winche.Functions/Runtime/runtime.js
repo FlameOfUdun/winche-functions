@@ -9,7 +9,7 @@
 //      {t:"invoke", id, version, name, arg, context, timeoutMs, memoryMb?, fresh?}
 //      {t:"warm", id, version, functions: {name: count}} — keep that many instances of each function loaded (done when they are)
 //      {t:"stats", id}                                — the instances now (answered as done, result: [...])
-//      {t:"reply", id, callId, result | error}        — the answer to a ctx.db / ctx.files / ctx.users call
+//      {t:"reply", id, callId, result | error}        — the answer to a @winche/admin call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
 // Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"ready"}
 //      {t:"done", id, result | error, heapMb, retired?: {reason: "memory" | "timeout" | "crash", heapMb?, limitMb?}}
@@ -19,8 +19,12 @@ const workers = new Map();   // request id -> Worker
 
 const SANDBOX = { read: false, write: false, env: false, run: false, ffi: false, sys: false };
 
-// What each worker runs first: the bridge for ctx.* calls and console output, then the request.
+// What each worker runs first: the bridge for @winche/admin calls and console output, then the request.
 const BOOT = `
+import { AsyncLocalStorage } from "node:async_hooks";
+// The run in progress, across its awaits: @winche/admin, secrets and resources (@winche/functions) find it here.
+const runs = new AsyncLocalStorage();
+globalThis[Symbol.for("winche.run")] = () => runs.getStore();
 const pending = new Map();
 let next = 1;
 // V8's collector (the runtime is started with --expose-gc): kept here, not left for functions to call.
@@ -34,7 +38,7 @@ const done = (p) => {
   if (limitBytes && heap > limitBytes && collect) { collect(); heap = Deno.memoryUsage().heapUsed; }
   postMessage({ ...p, t: "done", heap });
 };
-// A run's ctx calls carry its id: one made after its run has finished (work it didn't await) is refused, never served
+// A run's calls carry its id: one made after its run has finished (work it didn't await) is refused, never served
 // as part of the worker's next run.
 const callFor = (run) => (op, args) => new Promise((resolve, reject) => {
   const callId = next++;
@@ -54,10 +58,10 @@ const toBase64 = (bytes) => {
   return btoa(bin);
 };
 const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-// Secrets the function declared (options.secrets), read from the console's encrypted store for this run.
+// Secrets the function lists (options.secrets), read from the console's encrypted store for this run.
 const secretsOf = (s, fn) => ({
   get: (name) => {
-    if (!Object.hasOwn(s, name)) throw Object.assign(new Error(fn + " doesn't declare the secret " + name + ": add it to the function's options (secrets: ['" + name + "'])."), { code: "failed-precondition" });
+    if (!Object.hasOwn(s, name)) throw Object.assign(new Error(fn + " doesn't list the secret " + name + ": give its handle in the function's options ({ secrets: [handle] }, the handle from secrets.define('" + name + "'))."), { code: "failed-precondition" });
     if (s[name] == null) throw Object.assign(new Error("The secret " + name + " isn't set: set it in the console (the Secrets page) or with: winche functions secrets:set " + name), { code: "failed-precondition" });
     return s[name];
   },
@@ -80,16 +84,18 @@ const resourcesOf = (files) => ({
   },
   has: (path) => Object.hasOwn(files, resourcePath(path)),
 });
-// The run's raw context: the SDK (functions.ts, bundled with the code) builds ctx.documents, ctx.files and ctx.auth on it.
+// The run's raw context (functions.ts makes ctx of it), and its state for @winche/admin, secrets and resources.
 const context = (c, run) => ({
   call: callFor(run),
   functionName: c.functionName,
-  readOnly: !!c.readOnly,
   auth: c.auth ?? null,
-  console: c.console ?? null,
+  log: (...a) => console.log(...a),
+});
+const stateOf = (c, run) => ({
+  call: callFor(run),
+  name: c.functionName,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),
   resources: resourcesOf(c.resources ?? {}),
-  log: (...a) => console.log(...a),
 });
 self.onmessage = async (m) => {
   const d = m.data;
@@ -126,7 +132,7 @@ self.onmessage = async (m) => {
       const request = new Request(a.url, { method: a.method, headers: a.headers,
         body: a.body && a.method !== "GET" && a.method !== "HEAD" ? fromBase64(a.body) : undefined });
       Object.defineProperty(request, "ip", { value: a.ip ?? null });
-      let out = await fn.handler(request, context(d.context, d.run));
+      let out = await runs.run(stateOf(d.context, d.run), () => fn.handler(request, context(d.context, d.run)));
       if (!(out instanceof Response))
         out = out === undefined || out === null ? new Response(null, { status: 204 })
           : typeof out === "string" ? new Response(out, { headers: { "content-type": "text/plain; charset=utf-8" } })
@@ -135,7 +141,7 @@ self.onmessage = async (m) => {
       done({ result: { status: out.status, headers: [...out.headers], body: bytes.length ? toBase64(bytes) : null } });
       return;
     }
-    const result = await fn.handler(d.arg, context(d.context, d.run));
+    const result = await runs.run(stateOf(d.context, d.run), () => fn.handler(d.arg, context(d.context, d.run)));
     done({ result: result === undefined ? null : JSON.parse(JSON.stringify(result)) });
   } catch (e) {
     done({ error: {

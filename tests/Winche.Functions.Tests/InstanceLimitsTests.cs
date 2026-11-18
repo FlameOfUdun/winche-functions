@@ -15,7 +15,7 @@ public class InstanceLimitsTests(PostgresFixture pg)
         var d = await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, schedule, http } from "@winche/functions";
+                import { callable, schedule, http } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const quick = callable(async () => 1);
                 export const report = callable(async () => 1, { memory: 768, maxInstances: 3, reservedInstances: 1, isolate: true });
                 export const nightly = schedule("0 2 * * *", async () => {}, { minInstances: 0, maxInstances: 1 });
@@ -37,12 +37,12 @@ public class InstanceLimitsTests(PostgresFixture pg)
         var refused = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, documents } from "@winche/functions";
+                import { callable, onDocument } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const big = callable(async () => 1, { memory: 4096 });
                 export const odd = callable(async () => 1, { maxInstances: 2.5 });
                 export const few = callable(async () => 1, { maxInstances: 2, minInstances: 3, reservedInstances: 9 });
                 export const many = callable(async () => 1, { maxInstances: 16, reservedInstances: 16 });
-                export const check = documents.beforeWrite("x/{id}", async () => {}, { memory: 128 });
+                export const check = onDocument.willBeWritten("x/{id}", async () => {}, { memory: 128 });
                 """,
         }, null, null));
         Assert.Contains(refused.Problems, p => p == "big: memory is 64 to 1024 MB (this server's most).");

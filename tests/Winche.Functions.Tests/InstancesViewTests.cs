@@ -8,7 +8,7 @@ namespace Winche.Functions.Tests;
 public class InstancesViewTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { callable } from "@winche/functions";
+        import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const kept = [];
         export const grow = callable(async () => { kept.push(Array.from({ length: 2_600_000 }, (_, i) => i + 0.5)); return kept.length; }, { memory: 64 });

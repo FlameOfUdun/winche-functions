@@ -7,7 +7,7 @@ namespace Winche.Functions.Tests;
 public class InstancesTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { callable } from "@winche/functions";
+        import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
         // Keeps about 20 MB more on every run (numbers in arrays: on the heap).

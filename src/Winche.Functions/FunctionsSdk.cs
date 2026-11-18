@@ -1,16 +1,32 @@
 namespace Winche.Functions;
 
-/// <summary>The @winche/functions module (TypeScript): what deployments import, and what editors use for types.</summary>
+/// <summary>
+/// The SDK modules (TypeScript) deployments import, and editors use for types: @winche/functions (defining functions),
+/// @winche/admin (the project's data) and @winche/functions/testing.
+/// </summary>
 public static class FunctionsSdk
 {
-    /// <summary>The module's source, to save as .winche/functions.ts next to the functions.</summary>
+    /// <summary>Each module's file (saved in .winche/ next to the functions) and the name code imports it by.</summary>
+    public static readonly IReadOnlyList<(string File, string Specifier)> Modules =
+    [
+        ("functions.ts", "@winche/functions"),
+        ("admin.ts", "@winche/admin"),
+        ("testing.ts", "@winche/functions/testing"),
+    ];
+
+    /// <summary>A module's source by its file name (functions.ts, admin.ts, testing.ts).</summary>
+    public static string SourceOf(string file) => DenoRuntime.Resource(file);
+
+    /// <summary>The @winche/functions module's source.</summary>
     public static string Source => DenoRuntime.Resource("functions.ts");
 
-    /// <summary>The deno.json a functions folder starts with: @winche/functions resolved to that file.</summary>
+    /// <summary>The deno.json a functions folder starts with: the SDK's modules resolved to .winche/.</summary>
     public const string DenoJson = """
         {
           "imports": {
-            "@winche/functions": "./.winche/functions.ts"
+            "@winche/functions": "./.winche/functions.ts",
+            "@winche/admin": "./.winche/admin.ts",
+            "@winche/functions/testing": "./.winche/testing.ts"
           }
         }
         """;

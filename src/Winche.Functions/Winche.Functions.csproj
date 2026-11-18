@@ -21,6 +21,8 @@
   <ItemGroup>
     <EmbeddedResource Include="Runtime\runtime.js" LogicalName="runtime.js" />
     <EmbeddedResource Include="Runtime\functions.ts" LogicalName="functions.ts" />
+    <EmbeddedResource Include="Runtime\admin.ts" LogicalName="admin.ts" />
+    <EmbeddedResource Include="Runtime\testing.ts" LogicalName="testing.ts" />
   </ItemGroup>
 
   <ItemGroup>

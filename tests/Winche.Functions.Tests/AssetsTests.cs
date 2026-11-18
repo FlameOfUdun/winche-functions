@@ -5,31 +5,31 @@ using Winche.Database.Runtime;
 
 namespace Winche.Functions.Tests;
 
-/// <summary>ctx.assets (channels, releases, files with the server's rights) and the assets triggers.</summary>
+/// <summary>admin.assets (channels, releases, files with the server's rights) and the assets triggers.</summary>
 [Collection("postgres")]
 public class AssetsTests(PostgresFixture pg)
 {
     private const string Index = """
-        import { assets, callable } from "@winche/functions";
+        import { onAssets, callable } from "@winche/functions"; import * as admin from "@winche/admin";
         export const strings = callable(async (p: { channel: string; lang: string }, ctx) => {
-          const release = await ctx.assets.channel(p.channel).get();
+          const release = await admin.assets.channel(p.channel).get();
           if (!release) return null;
           return { release: release.number, has: release.has(`translations/${p.lang}.json`), paths: release.paths("translations"),
             strings: await release.file(`translations/${p.lang}.json`).json() };
         });
         export const missing = callable(async (_: unknown, ctx) => {
-          try { await (await ctx.assets.release(1))!.file("nope.txt").text(); return "read"; } catch (e) { return (e as { code?: string }).code; }
+          try { await (await admin.assets.release(1))!.file("nope.txt").text(); return "read"; } catch (e) { return (e as { code?: string }).code; }
         });
         export const overview = callable(async (_: unknown, ctx) => ({
-          channels: (await ctx.assets.channels()).map((c) => `${c.name}@${c.release}`),
-          releases: (await ctx.assets.releases()).map((r) => r.number),
-          link: (await (await ctx.assets.release(1))!.file("translations/en.json").downloadUrl()).url.startsWith("mem://"),
+          channels: (await admin.assets.channels()).map((c) => `${c.name}@${c.release}`),
+          releases: (await admin.assets.releases()).map((r) => r.number),
+          link: (await (await admin.assets.release(1))!.file("translations/en.json").downloadUrl()).url.startsWith("mem://"),
         }));
-        export const onRelease = assets.onReleased(async (e, ctx) => {
-          await ctx.documents.doc(`releases/${e.release}`).set({ channel: e.channel, note: e.note, by: e.by });
+        export const onRelease = onAssets.released(async (e, ctx) => {
+          await admin.documents.doc(`releases/${e.release}`).set({ channel: e.channel, note: e.note, by: e.by });
         });
-        export const onBeta = assets.onChannelMoved(async (e, ctx) => {
-          await ctx.documents.doc(`moves/${e.channel}-${e.release}`).set({ at: e.at });
+        export const onBeta = onAssets.channelMoved(async (e, ctx) => {
+          await admin.documents.doc(`moves/${e.channel}-${e.release}`).set({ at: e.at });
         }, { channel: "beta" });
         """;
 

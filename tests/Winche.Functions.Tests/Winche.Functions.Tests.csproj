@@ -26,4 +26,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Sdk\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
