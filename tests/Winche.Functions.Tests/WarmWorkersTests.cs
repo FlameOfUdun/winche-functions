@@ -7,7 +7,7 @@ namespace Winche.Functions.Tests;
 public class WarmWorkersTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+        import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
 
         // Kept at the top of the module: it lasts as long as the worker.
         let runs = 0;

@@ -10,7 +10,7 @@ namespace Winche.Functions.Tests;
 public class AssetsTests(PostgresFixture pg)
 {
     private const string Index = """
-        import { onAssets, callable } from "@winche/functions"; import * as admin from "@winche/admin";
+        import { onAssets, callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
         export const strings = callable(async (p: { channel: string; lang: string }, ctx) => {
           const release = await admin.assets.channel(p.channel).get();
           if (!release) return null;

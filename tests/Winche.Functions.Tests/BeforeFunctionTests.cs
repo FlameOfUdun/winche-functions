@@ -12,7 +12,7 @@ namespace Winche.Functions.Tests;
 public class BeforeFunctionTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { onDocument, onFile, onUser, HttpsError } from "@winche/functions"; import * as admin from "@winche/admin";
+        import { onDocument, onFile, onUser, HttpsError } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
 
         export const guardRecords = onDocument.willBeWritten("records/{id}", async (e, ctx) => {
           if (e.before.get("signedOff")) throw new HttpsError("permission-denied", `Record ${e.params.id} is signed off.`);
@@ -96,7 +96,7 @@ public class BeforeFunctionTests(PostgresFixture pg)
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { onDocument } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { onDocument } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const slow = onDocument.willBeWritten("a/{id}", async () => {}, { timeoutSeconds: 60 });
                 export const nowhere = onDocument.willBeWritten("", async () => {});
                 """,

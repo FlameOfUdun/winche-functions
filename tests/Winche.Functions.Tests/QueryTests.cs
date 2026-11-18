@@ -18,7 +18,7 @@ public class QueryTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const pages = callable(async (_d, ctx) => {
                   const names: string[][] = [];
                   const jobs = admin.documents.collection("jobs");
@@ -50,7 +50,7 @@ public class QueryTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; import { FieldValue, type WriteBatch } from "@winche/admin";
+                import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin"; import { FieldValue, type WriteBatch } from "@winche-technologies/winche-admin";
                 export const run = callable(async (_d, ctx) => {
                   const db = admin.documents;
                   await db.doc("queue/q1").set({ n: 1 });

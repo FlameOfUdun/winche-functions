@@ -7,7 +7,7 @@ public sealed record ConsolePageFile(byte[] Content, string ContentType);
 
 /// <summary>
 /// Console pages (<c>consolePage</c>): the project's own HTML, JS and CSS, deployed with the functions, which the console
-/// shows in a sandboxed frame. In them @winche/admin acts as the person who opened the page, limited by their role.
+/// shows in a sandboxed frame. In them @winche-technologies/winche-admin acts as the person who opened the page, limited by their role.
 /// </summary>
 public static class ConsolePages
 {

@@ -9,7 +9,7 @@ namespace Winche.Functions.Tests;
 public class ConsolePagesTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { pages, callable } from "@winche/functions";
+        import { pages, callable } from "@winche-technologies/winche-functions";
         export const reports = pages({ title: "Reports", files: "console/reports", icon: "chart-bar", order: 2 });
         export const setup = pages({ title: "Setup", files: "./console/setup/", minRole: "admin" });
         export const hello = callable(async () => "hi");
@@ -33,7 +33,7 @@ public class ConsolePagesTests(PostgresFixture pg)
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { pages } from "@winche/functions";
+                import { pages } from "@winche-technologies/winche-functions";
                 export const a = pages({ title: "", files: "../outside" });
                 export const b = pages({ title: "B", files: "console/missing", icon: "Not An Icon" });
                 export const c = pages({ title: "C", files: "console/missing", minRole: "owner" as any });

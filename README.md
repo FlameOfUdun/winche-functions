@@ -7,8 +7,8 @@ deployed with `winche functions deploy`. The console shows what's deployed, runs
 its change history to roll back to.
 
 ```ts
-import { callable, onDocument, onFile, onUser, schedule, HttpsError } from "@winche/functions";
-import { documents, FieldValue } from "@winche/admin";
+import { callable, onDocument, onFile, onUser, schedule, HttpsError } from "@winche-technologies/winche-functions";
+import { documents, FieldValue } from "@winche-technologies/winche-admin";
 
 // Called by apps: the SDKs' functions.call("hello", { name: "ann" })
 export const hello = callable(async (data: { name: string }, ctx) => {
@@ -30,17 +30,17 @@ export const nightly = schedule("0 2 * * *", async () => {
 ```
 
 Two npm packages, which the project pins itself in its `deno.json` (`winche functions init` writes it):
-**`@winche/functions`** defines functions (triggers, callables, HTTP functions, schedules, pages), their `ctx` (the
-call: `name`, `caller`, `log`), secrets and resources; **`@winche/admin`** is the project's data (documents, files, the
+**`@winche-technologies/winche-functions`** defines functions (triggers, callables, HTTP functions, schedules, pages), their `ctx` (the
+call: `name`, `caller`, `log`), secrets and resources; **`@winche-technologies/winche-admin`** is the project's data (documents, files, the
 app's users, assets, calling functions), the same SDK console pages and other servers use. In functions it acts with
 the server's rights. Each has its own repository (winche-functions-typescript-sdk, winche-admin-typescript-sdk, MIT).
 
 ```json
 {
   "imports": {
-    "@winche/functions": "npm:@winche-technologies/winche-functions@^3",
-    "@winche/functions/testing": "npm:@winche-technologies/winche-functions@^3/testing",
-    "@winche/admin": "npm:@winche-technologies/winche-admin@^3"
+    "@winche-technologies/winche-functions": "npm:@winche-technologies/winche-functions@^3",
+    "@winche-technologies/winche-functions/testing": "npm:@winche-technologies/winche-functions@^3/testing",
+    "@winche-technologies/winche-admin": "npm:@winche-technologies/winche-admin@^3"
   },
   "minimumDependencyAge": {
     "age": "P1D",
@@ -52,20 +52,19 @@ the server's rights. Each has its own repository (winche-functions-typescript-sd
 (Deno doesn't install npm versions younger than a day, against compromised releases; the SDKs are exempt, so a new
 one can be used at once, and every other package keeps the wait.)
 
-They're published under the `@winche-technologies` npm scope; `@winche/…` is the name code imports them by (an alias
-here, or `npm install @winche/admin@npm:@winche-technologies/winche-admin` for Node and bundlers). The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without
+Code imports them by their npm names (`npm install @winche-technologies/winche-admin` for Node and bundlers). The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without
 naming it is refused, saying what to add. A server that can't reach npm (or a test) can provide them:
-`FunctionsOptions.ProvidedPackages["@winche/admin"] = folder` (the package's `package.json` and built files), used only
+`FunctionsOptions.ProvidedPackages["@winche-technologies/winche-admin"] = folder` (the package's `package.json` and built files), used only
 where `deno.json` doesn't name the package. **Protocol:** the SDKs speak protocol 1 with this server; a function or
 call for another is refused, saying which version to use.
 
 | Package | |
 | --- | --- |
-| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets, console pages; `functions.call` for @winche/admin. Deployed through the console (`winche functions deploy`, as you or a CI token). |
-| `Winche.Functions.Database` | @winche/admin's `documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database. |
-| `Winche.Functions.Storage` | @winche/admin's `files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
-| `Winche.Functions.Auth` | @winche/admin's `auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
-| `Winche.Functions.Assets` | @winche/admin's `assets`: channels, releases and their files (Winche Assets), and the `onAssets.released` / `channelMoved` triggers. |
+| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets, console pages; `functions.call` for @winche-technologies/winche-admin. Deployed through the console (`winche functions deploy`, as you or a CI token). |
+| `Winche.Functions.Database` | @winche-technologies/winche-admin's `documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database. |
+| `Winche.Functions.Storage` | @winche-technologies/winche-admin's `files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
+| `Winche.Functions.Auth` | @winche-technologies/winche-admin's `auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
+| `Winche.Functions.Assets` | @winche-technologies/winche-admin's `assets`: channels, releases and their files (Winche Assets), and the `onAssets.released` / `channelMoved` triggers. |
 
 ## Install
 
@@ -120,7 +119,7 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   ones go after five minutes, down to `minInstances`. Projects, versions and functions never share instances.
 - **Module state lasts between runs** on the same worker: keep a client or a parsed file at the top of the module to
   reuse it, but never one caller's data (the next run may be someone else's). A run must `await` what it starts:
-  @winche/admin called after it has answered is refused. `{ fresh: true }` gives a
+  @winche-technologies/winche-admin called after it has answered is refused. `{ fresh: true }` gives a
   function a new sandbox for every run, with nothing kept, at the cost of loading its code each time (milliseconds for
   a small bundle, tens of them for a large one).
 
@@ -162,8 +161,8 @@ deployment's `minInstances` are loaded: a readiness check can wait for it.
 services' webhooks. It gets a standard `Request` and returns a `Response`, text, JSON, or nothing (204).
 
 ```ts
-import { http, HttpsError, secrets } from "@winche/functions";
-import { documents, files } from "@winche/admin";
+import { http, HttpsError, secrets } from "@winche-technologies/winche-functions";
+import { documents, files } from "@winche-technologies/winche-admin";
 
 // A link sent by email, valid for days: /functions/v1/http/download/<token>
 export const download = http.onRequest(async (req) => {
@@ -191,16 +190,16 @@ export const paymentEvents = http.onRequest(async (req) => {
   error answer with its status and message, as for callables.
 - They can't be called as callables, and callables can't be reached here.
 
-## Documents, files and users (@winche/admin)
+## Documents, files and users (@winche-technologies/winche-admin)
 
-`documents`, `files` and `auth` from `@winche/admin` read like the Dart SDKs (winche_database, winche_storage): you get
+`documents`, `files` and `auth` from `@winche-technologies/winche-admin` read like the Dart SDKs (winche_database, winche_storage): you get
 a **reference** from the service, `get()` returns a **snapshot**, and a snapshot's `reference` leads back. In functions
 they act with the server's rights: access rules don't apply, unless the function acts as one of the app's users
 (below).
 
 ```ts
-import { schedule } from "@winche/functions";
-import { documents as db, FieldValue, Filter, Aggregate } from "@winche/admin";
+import { schedule } from "@winche-technologies/winche-functions";
+import { documents as db, FieldValue, Filter, Aggregate } from "@winche-technologies/winche-admin";
 
 export const tidy = schedule("0 3 * * *", async () => {
   const visits = db.collection("visits");                               // or db.doc("patients/p1").collection("visits")
@@ -283,8 +282,8 @@ call is checked against the project's access rules for them, as if the app had m
 `permission-denied`; `functions.call` passes them as the caller. The plain SDK stays available beside it:
 
 ```ts
-import { callable } from "@winche/functions";
-import * as admin from "@winche/admin";
+import { callable } from "@winche-technologies/winche-functions";
+import * as admin from "@winche-technologies/winche-admin";
 
 export const leaveWard = callable(async (data: { ward: string }, ctx) => {
   const me = admin.as(ctx.caller!);
@@ -309,7 +308,7 @@ The functions folder's `resources/` folder is deployed with the code: files the 
 and translations it renders with. Declare one (a handle) and read it while a function runs:
 
 ```ts
-import { resources } from "@winche/functions";
+import { resources } from "@winche-technologies/winche-functions";
 
 const german = resources.define("translations/de.json");
 const font = resources.define("fonts/Roboto-400.ttf");
@@ -330,12 +329,12 @@ const all = await resources.list("translations");                    // ["transl
 
 ## Assets
 
-`assets` (@winche/admin) reads the app's assets (Winche Assets: content published from the CLI as releases, followed through
+`assets` (@winche-technologies/winche-admin) reads the app's assets (Winche Assets: content published from the CLI as releases, followed through
 channels) with the server's rights — no rules. Not to be confused with resources, which are the function's own files.
 
 ```ts
-import { callable, onAssets } from "@winche/functions";
-import { assets } from "@winche/admin";
+import { callable, onAssets } from "@winche-technologies/winche-functions";
+import { assets } from "@winche-technologies/winche-admin";
 
 export const strings = callable(async (p: { lang: string }) => {
   const release = await assets.channel("production").get();       // the release it points at, or null
@@ -373,7 +372,7 @@ never shown again. Declare each once (a handle), give it to the functions that r
 runs:
 
 ```ts
-import { onDocument, secrets } from "@winche/functions";
+import { onDocument, secrets } from "@winche-technologies/winche-functions";
 
 const mailKey = secrets.define("MAIL_API_KEY");
 
@@ -401,10 +400,10 @@ export const sendReport = onDocument.created("reports/{id}", async () => {
 A project can add pages of its own to the console: dashboards, admin tools, anything its team needs. The page is
 yours: plain HTML, JavaScript and CSS, or the build output of any framework, in a folder next to `index.ts`. The console
 shows it in its sidebar (under **Project pages**) and has no say in what it does or how it looks. In it,
-`@winche/admin` acts as the person who opened it, limited by their role in the project.
+`@winche-technologies/winche-admin` acts as the person who opened it, limited by their role in the project.
 
 ```ts
-import { pages } from "@winche/functions";
+import { pages } from "@winche-technologies/winche-functions";
 
 // console/reports/index.html (and its scripts, styles, images) is the page.
 export const reports = pages({ title: "Reports", files: "console/reports", icon: "chart-bar", minRole: "viewer" });
@@ -423,7 +422,7 @@ export const reports = pages({ title: "Reports", files: "console/reports", icon:
 ```
 
 ```js
-// console/reports/app.js — the page's own copy of @winche/admin (or bundled with it).
+// console/reports/app.js — the page's own copy of @winche-technologies/winche-admin (or bundled with it).
 import { documents } from "./admin.js";
 
 const visits = await documents.collection("visits").where("at", ">=", weeksAgo(4)).count();
@@ -446,11 +445,11 @@ document.querySelector("#close").onclick = async () => {
   server's rights and writes the answer or progress back to that document, which the page reads. Whoever may write
   there may ask.
 - **Sandboxed:** the page runs in a frame with an origin of its own and no cookies of the console's, so it can't call
-  the console's API or read its session: its @winche/admin calls go to the console over a channel only it holds. Its
+  the console's API or read its session: its @winche-technologies/winche-admin calls go to the console over a channel only it holds. Its
   scripts, styles, images and fonts come from its own folder (or inline); it can't fetch from the network
   (`connect-src 'none'`). Links it opens go to a new tab. If it navigates the frame elsewhere, it's disconnected and
   asks to be reloaded.
-- **The SDK is the page's:** bundle `@winche/admin` with the page (Vite: `base: "./"`), or put its built file in the
+- **The SDK is the page's:** bundle `@winche-technologies/winche-admin` with the page (Vite: `base: "./"`), or put its built file in the
   page's folder and import it from there; the console gives a page only the channel the SDK finds by itself. The CLI
   builds pages named in `winche.json` (`"pages"`) when it deploys.
 - **Files:** `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.svg`, `.txt`, `.png`, `.jpg`, `.gif`, `.webp`, `.ico`,
@@ -463,7 +462,7 @@ document.querySelector("#close").onclick = async () => {
 They run **before** a write is saved, inside it, and can refuse it or change it:
 
 ```ts
-import { onDocument, onFile, onUser, HttpsError } from "@winche/functions";
+import { onDocument, onFile, onUser, HttpsError } from "@winche-technologies/winche-functions";
 
 export const guardRecords = onDocument.willBeWritten("records/{id}", async (e, ctx) => {
   if (e.before.get("signedOff")) throw new HttpsError("permission-denied", "This record is signed off.");
@@ -487,7 +486,7 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
   `{ metadata: { key: value | null }, contentDisposition, cacheControl }`. A delete can only be refused. Several
   before-functions on one path run in export order, each seeing the previous one's changes.
 - **Quick, and reading only:** 5 seconds unless `timeoutSeconds` says otherwise (at most 30): the write, and its locks,
-  wait for it. @winche/admin only reads here; side effects belong in `onDocument.created`… triggers.
+  wait for it. @winche-technologies/winche-admin only reads here; side effects belong in `onDocument.created`… triggers.
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
@@ -499,7 +498,7 @@ refused, naming each use and what replaces it.
 
 | 2.x | 3.0 |
 | --- | --- |
-| `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` | `import { documents, files, auth, assets } from "@winche/admin"` |
+| `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` | `import { documents, files, auth, assets } from "@winche-technologies/winche-admin"` |
 | `ctx.secrets.get("KEY")`, `{ secrets: ["KEY"] }` | `const key = secrets.define("KEY")` (top level), `{ secrets: [key] }`, `key.value()` / `key.isSet()` |
 | `ctx.resources.read(path)` / `readText` / `list` / `has` | `resources.define(path).bytes()` / `text()` / `exists()`, `resources.list(folder)` |
 | `ctx.functionName` | `ctx.name` |
@@ -508,11 +507,11 @@ refused, naming each use and what replaces it.
 | `users.onCreated` / `onDeleted` / `onSignedIn` / `onDisabled` / `beforeCreate` / `beforeSignIn` | `onUser.created` / `deleted` / `signedIn` / `disabled` / `willBeCreated` / `willSignIn` |
 | `assets.onReleased` / `onChannelMoved` | `onAssets.released` / `channelMoved` |
 | `consolePage(…)` | `pages(…)` |
-| `consoleAction(…)`, `ctx.console`, `window.winche` in pages | gone: pages use @winche/admin as their viewer; server work is asked for with a document a trigger answers |
-| `FieldValue`, `Filter`, `Link`, `DocumentSnapshot`, … from `@winche/functions` | from `@winche/admin` |
+| `consoleAction(…)`, `ctx.console`, `window.winche` in pages | gone: pages use @winche-technologies/winche-admin as their viewer; server work is asked for with a document a trigger answers |
+| `FieldValue`, `Filter`, `Link`, `DocumentSnapshot`, … from `@winche-technologies/winche-functions` | from `@winche-technologies/winche-admin` |
 
-New: `as(user)` (the access rules applied for one of the app's users), `functions.call`, `@winche/functions/testing`
-(`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche/admin` npm package for other servers
+New: `as(user)` (the access rules applied for one of the app's users), `functions.call`, `@winche-technologies/winche-functions/testing`
+(`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche-technologies/winche-admin` npm package for other servers
 (its own repository, winche-admin-typescript-sdk). The SDKs are npm packages the project pins in `deno.json`
 (`winche functions init`, CLI 3, writes it); the server no longer brings them.
 

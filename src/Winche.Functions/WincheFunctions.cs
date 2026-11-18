@@ -211,7 +211,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         if (await store.MissingResourcesAsync([.. resources.Values.Select(a => a.Hash)], ct) is { Count: > 0 } missing)
             throw new FunctionDeployException("Some resources haven't been sent.", [.. resources.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"resources/{a.Key}").Take(20)]);
         if (OldApi.Problems(files) is { Count: > 0 } old)
-            throw new FunctionDeployException("This code uses the functions API from before @winche/admin.", old);
+            throw new FunctionDeployException("This code uses the functions API from before @winche-technologies/winche-admin.", old);
         if (bundler.MissingPackages(files) is { Count: > 0 } unnamed)
             throw new FunctionDeployException("The code imports packages its deno.json doesn't name.", unnamed);
         var bundle = await bundler.BundleAsync(files, ct);
@@ -246,7 +246,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             var name = node["name"]!.GetValue<string>();
             if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol)
             {
-                problems.Add($"{name}: written with an @winche/functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche/functions {FunctionsSdk.Major}.x).");
+                problems.Add($"{name}: written with an @winche-technologies/winche-functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche-technologies/winche-functions {FunctionsSdk.Major}.x).");
                 continue;
             }
             var t = node["trigger"] as JsonObject ?? [];
@@ -426,7 +426,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         async Task<JsonNode?> Bridge(string op, JsonObject args)
         {
             if (readOnly && !AdminOps.IsRead(op))
-                throw new FunctionCallException("failed-precondition", $"@winche/admin can't change anything in a before-function ({op}): it would run outside the write being checked. Use a trigger (onDocument.created, …).");
+                throw new FunctionCallException("failed-precondition", $"@winche-technologies/winche-admin can't change anything in a before-function ({op}): it would run outside the write being checked. Use a trigger (onDocument.created, …).");
             return await AdminOps.RunAsync(services, op, args, ct);
         }
         void Log(string level, string message)

@@ -16,18 +16,18 @@ public class SecretsTests(PostgresFixture pg)
         var secrets = app.Service<FunctionSecrets>();
 
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(Code("""
-            import { callable, secrets } from "@winche/functions";
+            import { callable, secrets } from "@winche-technologies/winche-functions";
             export const a = callable(async () => 1, { secrets: [secrets.define("ses-key")] });
             """), null, null));
         Assert.Contains(bad.Problems, p => p.Contains("'ses-key' isn't a secret name"));
         bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(Code("""
-            import { callable } from "@winche/functions";
+            import { callable } from "@winche-technologies/winche-functions";
             export const b = callable(async () => 1, { secrets: ["SES_KEY"] as any });
             """), null, null));
         Assert.Contains(bad.Problems, p => p.Contains("'SES_KEY' is a name; give its handle"));
 
         var d = await functions.DeployAsync(Code("""
-            import { callable, secrets } from "@winche/functions";
+            import { callable, secrets } from "@winche-technologies/winche-functions";
             const sesKey = secrets.define("SES_KEY"), sesRegion = secrets.define("SES_REGION");
             export const send = callable(async (_d, ctx) => {
               const key = sesKey.value();

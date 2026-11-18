@@ -5,8 +5,8 @@ namespace Winche.Functions.Tests;
 public class PackagesTests(PostgresFixture pg)
 {
     private const string Hello = """
-        import { callable } from "@winche/functions";
-        import { documents } from "@winche/admin";
+        import { callable } from "@winche-technologies/winche-functions";
+        import { documents } from "@winche-technologies/winche-admin";
         export const hello = callable(async () => (await documents.doc("a/b").get()).exists ? "there" : "not there");
         """;
 
@@ -15,15 +15,15 @@ public class PackagesTests(PostgresFixture pg)
     {
         var bundler = new FunctionBundler(new FunctionsOptions());
         Assert.Equal([
-            "The code imports @winche/admin, which deno.json doesn't name: add \"@winche/admin\": \"npm:@winche-technologies/winche-admin@^3\" to its imports.",
-            "The code imports @winche/functions, which deno.json doesn't name: add \"@winche/functions\": \"npm:@winche-technologies/winche-functions@^3\" to its imports.",
+            "The code imports @winche-technologies/winche-admin, which deno.json doesn't name: add \"@winche-technologies/winche-admin\": \"npm:@winche-technologies/winche-admin@^3\" to its imports.",
+            "The code imports @winche-technologies/winche-functions, which deno.json doesn't name: add \"@winche-technologies/winche-functions\": \"npm:@winche-technologies/winche-functions@^3\" to its imports.",
         ], bundler.MissingPackages(new Dictionary<string, string> { ["index.ts"] = Hello }));
         Assert.Empty(bundler.MissingPackages(new Dictionary<string, string>
         {
             ["index.ts"] = Hello,
             ["deno.json"] = FunctionsSdk.DenoJson,
         }));
-        Assert.Contains("\"@winche/functions/testing\": \"npm:@winche-technologies/winche-functions@^3/testing\"", FunctionsSdk.DenoJson);
+        Assert.Contains("\"@winche-technologies/winche-functions/testing\": \"npm:@winche-technologies/winche-functions@^3/testing\"", FunctionsSdk.DenoJson);
         var config = System.Text.Json.Nodes.JsonNode.Parse(FunctionsSdk.DenoJson)!;
         Assert.Equal(["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"],
             config["minimumDependencyAge"]!["exclude"]!.AsArray().Select(e => e!.GetValue<string>()));
@@ -39,10 +39,10 @@ public class PackagesTests(PostgresFixture pg)
         var files = new Dictionary<string, string>
         {
             ["index.ts"] = Hello,
-            ["deno.json"] = """{ "imports": { "@winche/functions": "./vendor/functions/dist/index.js", "@winche/admin": "./vendor/admin/dist/index.js", "@winche-technologies/winche-admin": "./vendor/admin/dist/index.js" } }""",
+            ["deno.json"] = """{ "imports": { "@winche-technologies/winche-functions": "./vendor/winche-functions/dist/index.js", "@winche-technologies/winche-admin": "./vendor/winche-admin/dist/index.js" } }""",
         };
-        var root = Path.Combine(AppContext.BaseDirectory, "SdkPackages", "@winche");
-        foreach (var name in new[] { "functions", "admin" })
+        var root = Path.Combine(AppContext.BaseDirectory, "SdkPackages", "@winche-technologies");
+        foreach (var name in new[] { "winche-functions", "winche-admin" })
             foreach (var file in Directory.EnumerateFiles(Path.Combine(root, name), "*", SearchOption.AllDirectories))
                 files[$"vendor/{name}/{Path.GetRelativePath(Path.Combine(root, name), file).Replace('\\', '/')}"] = File.ReadAllText(file);
         await functions.DeployAsync(files, "Own copies", null);
@@ -52,6 +52,6 @@ public class PackagesTests(PostgresFixture pg)
         {
             ["index.ts"] = """export const later = { __winche: 2, trigger: { kind: "callable" }, options: {}, handler: async () => 1 };""",
         }, null, null));
-        Assert.Contains("later: written with an @winche/functions for protocol 2; this server speaks 1 (@winche/functions 3.x).", bad.Problems);
+        Assert.Contains("later: written with an @winche-technologies/winche-functions for protocol 2; this server speaks 1 (@winche-technologies/winche-functions 3.x).", bad.Problems);
     }
 }

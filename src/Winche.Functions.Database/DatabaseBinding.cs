@@ -63,7 +63,7 @@ internal sealed class FunctionsBeforeWrite(BeforeFunctions functions) : Winche.D
 }
 
 /// <summary>
-/// @winche/admin's documents: reads, queries, counts, aggregations, writes and adds in the database's wire format (the
+/// @winche-technologies/winche-admin's documents: reads, queries, counts, aggregations, writes and adds in the database's wire format (the
 /// same messages the WebSocket protocol takes), with the server's rights, or as an app user under the access rules.
 /// </summary>
 internal sealed class DatabaseBinding : IFunctionBinding, IActsAsAppUser

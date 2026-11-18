@@ -13,8 +13,8 @@ public class AdminSdkTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, HttpsError } from "@winche/functions";
-                import { functions, as, auth, documents } from "@winche/admin";
+                import { callable, HttpsError } from "@winche-technologies/winche-functions";
+                import { functions, as, auth, documents } from "@winche-technologies/winche-admin";
                 export const whoami = callable(async (_d, ctx) => ({ uid: ctx.caller?.uid ?? null, name: ctx.name }));
                 export const refuse = callable(async () => { throw new HttpsError("failed-precondition", "not now", { why: 1 }); });
                 export const outer = callable(async (_d, ctx) => ({
@@ -59,8 +59,8 @@ public class AdminSdkTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions";
-                import * as admin from "@winche/admin";
+                import { callable } from "@winche-technologies/winche-functions";
+                import * as admin from "@winche-technologies/winche-admin";
                 const code = (p: Promise<unknown>) => p.then(() => "ok", (e) => e.code);
                 export const tryAll = callable(async (_d, ctx) => {
                   const me = admin.as(ctx.caller!);

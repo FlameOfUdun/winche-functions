@@ -30,7 +30,7 @@ public class ExpandTests(PostgresFixture pg)
         await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions"; import * as admin from "@winche/admin"; import { Link } from "@winche/admin";
+                import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin"; import { Link } from "@winche-technologies/winche-admin";
                 export const visit = callable(async (_d, ctx) => {
                   const visit = admin.documents.doc("visits/v1");
                   const v = await visit.expand(["patient.doctor", "team"]).get();

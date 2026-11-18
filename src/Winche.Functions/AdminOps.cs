@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Winche.Functions;
 
 /// <summary>
-/// The operations @winche/admin sends (<c>binding.op</c> with JSON arguments), run by the bindings. Functions run them
+/// The operations @winche-technologies/winche-admin sends (<c>binding.op</c> with JSON arguments), run by the bindings. Functions run them
 /// with the server's rights; the console's admin API with the caller's role. An <c>as</c> argument (from
 /// <c>as(user)</c>) makes documents and files calls act as one of the app's users, under the access rules.
 /// </summary>
@@ -34,7 +34,7 @@ public static class AdminOps
         var dot = op.IndexOf('.');
         var name = dot > 0 ? op[..dot] : op;
         var binding = services.GetServices<IFunctionBinding>().FirstOrDefault(b => b.Name == name)
-            ?? throw new FunctionCallException("unavailable", $"@winche/admin's {name} isn't available on this server.");
+            ?? throw new FunctionCallException("unavailable", $"@winche-technologies/winche-admin's {name} isn't available on this server.");
         args = (JsonObject)args.DeepClone();
         var asUser = args["as"] is JsonObject who ? Caller(who) : null;
         args.Remove("as");

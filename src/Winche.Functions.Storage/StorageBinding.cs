@@ -53,7 +53,7 @@ internal sealed class FunctionsBeforeFileWrite(BeforeFunctions functions) : Winc
 }
 
 /// <summary>
-/// @winche/admin's files: list, get, read, write, download links and delete, with the server's rights, or as an app user
+/// @winche-technologies/winche-admin's files: list, get, read, write, download links and delete, with the server's rights, or as an app user
 /// (as(user)) under the storage's access rules.
 /// </summary>
 internal sealed class StorageBinding : IFunctionBinding, IActsAsAppUser

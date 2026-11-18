@@ -8,7 +8,7 @@ namespace Winche.Functions.Tests;
 public class HttpFunctionsTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { http, HttpsError, secrets } from "@winche/functions"; import * as admin from "@winche/admin";
+        import { http, HttpsError, secrets } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
         const hookSecret = secrets.define("HOOK_SECRET");
 
         // Another service's webhook: checks its signature with a secret, then records the event.

@@ -1,27 +1,26 @@
 namespace Winche.Functions;
 
 /// <summary>
-/// The TypeScript SDKs functions are written with, which each project pins itself (npm): <c>@winche/functions</c>
-/// (defining functions) and <c>@winche/admin</c> (the project's data). The server doesn't bring them: it bundles what
+/// The TypeScript SDKs functions are written with, which each project pins itself (npm): <c>@winche-technologies/winche-functions</c>
+/// (defining functions) and <c>@winche-technologies/winche-admin</c> (the project's data). The server doesn't bring them: it bundles what
 /// the deployment's deno.json names, unless the host provides them (<see cref="FunctionsOptions.ProvidedPackages"/>).
 /// </summary>
 public static class FunctionsSdk
 {
-    /// <summary>The protocol this server speaks with the SDKs (their exported functions' <c>__winche</c>, @winche/admin's calls).</summary>
+    /// <summary>The protocol this server speaks with the SDKs (their exported functions' <c>__winche</c>, @winche-technologies/winche-admin's calls).</summary>
     public const int Protocol = 1;
 
     /// <summary>The SDKs' major version for <see cref="Protocol"/>.</summary>
     public const int Major = 3;
 
     /// <summary>
-    /// The packages a functions folder imports: the name code imports (<c>@winche/…</c>) → its npm specifier (for
-    /// deno.json's imports). They're published under the <c>@winche-technologies</c> scope; <c>@winche/…</c> is the alias.
+    /// The packages a functions folder imports, by their npm names → their npm specifiers (for deno.json's imports).
     /// </summary>
     public static readonly IReadOnlyList<(string Name, string Specifier)> Packages =
     [
-        ("@winche/functions", $"npm:@winche-technologies/winche-functions@^{Major}"),
-        ("@winche/functions/testing", $"npm:@winche-technologies/winche-functions@^{Major}/testing"),
-        ("@winche/admin", $"npm:@winche-technologies/winche-admin@^{Major}"),
+        ("@winche-technologies/winche-functions", $"npm:@winche-technologies/winche-functions@^{Major}"),
+        ("@winche-technologies/winche-functions/testing", $"npm:@winche-technologies/winche-functions@^{Major}/testing"),
+        ("@winche-technologies/winche-admin", $"npm:@winche-technologies/winche-admin@^{Major}"),
     ];
 
     /// <summary>The npm packages behind <see cref="Packages"/>.</summary>

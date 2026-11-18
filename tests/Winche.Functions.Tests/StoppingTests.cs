@@ -7,7 +7,7 @@ namespace Winche.Functions.Tests;
 public class StoppingTests(PostgresFixture pg)
 {
     private const string Code = """
-        import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+        import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         await sleep(300);   // a slow module to load
         export const slow = callable(async () => { await sleep(1500); return "done"; });

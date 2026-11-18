@@ -9,7 +9,7 @@
 //      {t:"invoke", id, version, name, arg, context, timeoutMs, memoryMb?, fresh?}
 //      {t:"warm", id, version, functions: {name: count}} — keep that many instances of each function loaded (done when they are)
 //      {t:"stats", id}                                — the instances now (answered as done, result: [...])
-//      {t:"reply", id, callId, result | error}        — the answer to a @winche/admin call
+//      {t:"reply", id, callId, result | error}        — the answer to a @winche-technologies/winche-admin call
 //      {t:"forget", version}                          — drop a bundle (e.g. one only analyzed)
 // Out: {t:"log", id, level, message} · {t:"call", id, callId, op, args} · {t:"ready"}
 //      {t:"done", id, result | error, heapMb, retired?: {reason: "memory" | "timeout" | "crash", heapMb?, limitMb?}}
@@ -19,10 +19,10 @@ const workers = new Map();   // request id -> Worker
 
 const SANDBOX = { read: false, write: false, env: false, run: false, ffi: false, sys: false };
 
-// What each worker runs first: the bridge for @winche/admin calls and console output, then the request.
+// What each worker runs first: the bridge for @winche-technologies/winche-admin calls and console output, then the request.
 const BOOT = `
 import { AsyncLocalStorage } from "node:async_hooks";
-// The run in progress, across its awaits: @winche/admin, secrets and resources (@winche/functions) find it here.
+// The run in progress, across its awaits: @winche-technologies/winche-admin, secrets and resources (@winche-technologies/winche-functions) find it here.
 const runs = new AsyncLocalStorage();
 globalThis[Symbol.for("winche.run")] = () => runs.getStore();
 const pending = new Map();
@@ -84,7 +84,7 @@ const resourcesOf = (files) => ({
   },
   has: (path) => Object.hasOwn(files, resourcePath(path)),
 });
-// The run's raw context (functions.ts makes ctx of it), and its state for @winche/admin, secrets and resources.
+// The run's raw context (functions.ts makes ctx of it), and its state for @winche-technologies/winche-admin, secrets and resources.
 const context = (c, run) => ({
   call: callFor(run),
   functionName: c.functionName,
@@ -92,7 +92,7 @@ const context = (c, run) => ({
   log: (...a) => console.log(...a),
 });
 const stateOf = (c, run) => ({
-  protocol: 1,   // what @winche/admin checks it speaks
+  protocol: 1,   // what @winche-technologies/winche-admin checks it speaks
   call: callFor(run),
   name: c.functionName,
   secrets: secretsOf(c.secrets ?? {}, c.functionName),

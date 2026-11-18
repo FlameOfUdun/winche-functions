@@ -13,7 +13,7 @@ public sealed class FunctionsOptions
 
     /// <summary>
     /// Packages this server provides to deployments that import them without saying where from (deno.json doesn't name
-    /// them): package name (e.g. <c>@winche/admin</c>) → a folder with its package.json and built files. For servers
+    /// them): package name (e.g. <c>@winche-technologies/winche-admin</c>) → a folder with its package.json and built files. For servers
     /// that can't reach npm, and tests. Empty by default: a deployment names its packages itself.
     /// </summary>
     public Dictionary<string, string> ProvidedPackages { get; } = new(StringComparer.Ordinal);

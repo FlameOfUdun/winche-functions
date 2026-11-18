@@ -18,7 +18,7 @@ public class ApiTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, onDocument } from "@winche/functions"; import * as admin from "@winche/admin"; import { FieldValue, Filter, Aggregate, GeoPoint, Link } from "@winche/admin";
+                import { callable, onDocument } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin"; import { FieldValue, Filter, Aggregate, GeoPoint, Link } from "@winche-technologies/winche-admin";
                 export const run = callable(async (_d, ctx) => {
                   const db = admin.documents;
                   const orders = db.collection("shops/s1/orders");
@@ -107,7 +107,7 @@ public class ApiTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = $$"""
-                import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const copy = callable(async (d: { good: boolean }, ctx) => {
                   const f = await admin.files.child("media/clip").putFromUrl("http://127.0.0.1:{{port}}/clip.mp4", { headers: { authorization: d.good ? "Bearer good" : "Bearer bad" }, metadata: { from: "gcs" } });
                   return { size: f.data!.sizeBytes, type: f.data!.mimeType, from: f.data!.metadata.from };

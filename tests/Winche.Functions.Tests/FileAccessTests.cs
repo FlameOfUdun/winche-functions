@@ -13,7 +13,7 @@ public class FileAccessTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, onFile } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { callable, onFile } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const make = callable(async (_d, ctx) => {
                   const bytes = new Uint8Array(70000).map((_, i) => i % 251);
                   const week = admin.files.child("reports/u1").child("week.pdf");
@@ -71,7 +71,7 @@ public class FileAccessTests(PostgresFixture pg)
         await functions.DeployAsync(new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, onDocument } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { callable, onDocument } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const seed = callable(async (_d, ctx) => { await admin.files.child("limits.txt").putData("3"); });
                 export const check = onDocument.willBeWritten("orders/{id}", async (_e, ctx) => {
                   if (Number(await admin.files.child("limits.txt").getText()) !== 3) throw new Error("couldn't read the limit");

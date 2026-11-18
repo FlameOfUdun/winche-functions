@@ -29,7 +29,7 @@ public class DescribedTests(PostgresFixture pg)
         await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
         var functions = app.Service<WincheFunctions>();
         var d = await functions.DeployAsync(new Dictionary<string, string> { ["index.ts"] = """
-            import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+            import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
             export const strings = callable(async (data: { lang: string }) => ({ hello: data.lang }), {
               description: "A language's strings.",
               input: { type: "object", properties: { lang: { enum: ["de", "en"] } }, required: ["lang"] },
@@ -50,7 +50,7 @@ public class DescribedTests(PostgresFixture pg)
         Assert.Equal("A language's strings.", functions.Current!.Functions.Single(f => f.Name == "strings").About);
 
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(new Dictionary<string, string> { ["index.ts"] = $$"""
-            import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+            import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
             export const a = callable(async () => 1, { description: "{{new string('x', 301)}}" });
             export const b = callable(async () => 1, { input: "a string" });
             """ }, "Bad", null));

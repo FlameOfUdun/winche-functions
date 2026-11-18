@@ -6,7 +6,7 @@ namespace Winche.Functions.Tests;
 public class ResourcesTests(PostgresFixture pg)
 {
     private const string Index = """
-        import { callable, resources } from "@winche/functions";
+        import { callable, resources } from "@winche-technologies/winche-functions";
         export const read = callable(async (p: { path: string }) => resources.define(p.path).text());
         export const size = callable(async (p: { path: string }) => (await resources.define(p.path).bytes())?.length ?? null);
         export const list = callable(async (p: { folder?: string }) => ({ all: await resources.list(p?.folder), has: resources.define("a.txt").exists() }));
