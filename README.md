@@ -7,34 +7,40 @@ deployed with `winche functions deploy`. The console shows what's deployed, runs
 its change history to roll back to.
 
 ```ts
-import { callable, documents, files, users, schedule, FieldValue, HttpsError } from "@winche/functions";
+import { callable, onDocument, onFile, onUser, schedule, HttpsError } from "@winche/functions";
+import { documents, FieldValue } from "@winche/admin";
 
 // Called by apps: the SDKs' functions.call("hello", { name: "ann" })
 export const hello = callable(async (data: { name: string }, ctx) => {
   if (!ctx.caller) throw new HttpsError("unauthenticated", "Sign in first.");
-  const person = await ctx.documents.doc(`people/${data.name}`).get();
+  const person = await documents.doc(`people/${data.name}`).get();
   return { greeting: `Hello ${person.get("first") ?? data.name}` };
 });
 
 // When a document is created: {name} parts of the path are in e.params
-export const onVisit = documents.onCreated("patients/{patientId}/visits/{visitId}", async (e, ctx) => {
-  await ctx.documents.doc(`patients/${e.params.patientId}`).update({ lastVisit: e.data.get("at"), visits: FieldValue.increment(1) });
+export const onVisit = onDocument.created("patients/{patientId}/visits/{visitId}", async (e) => {
+  await documents.doc(`patients/${e.params.patientId}`).update({ lastVisit: e.data.get("at"), visits: FieldValue.increment(1) });
 });
 
-export const onScan = files.onUploaded("scans/{rest=**}", async (e, ctx) => ctx.log("New scan", e.path, e.file.data?.sizeBytes));
-export const welcome = users.onCreated(async (e) => e.user.reference.setCustomClaims({ role: "patient" }));
-export const nightly = schedule("0 2 * * *", async (_e, ctx) => {
+export const onScan = onFile.uploaded("scans/{rest=**}", async (e, ctx) => ctx.log("New scan", e.path, e.file.data?.sizeBytes));
+export const welcome = onUser.created(async (e) => e.user.reference.setCustomClaims({ role: "patient" }));
+export const nightly = schedule("0 2 * * *", async () => {
   await fetch("https://example.com/nightly-report", { method: "POST" });
 }, { timeZone: "Europe/London", timeoutSeconds: 300 });
 ```
 
+Two modules: **`@winche/functions`** defines functions (triggers, callables, HTTP functions, schedules, pages), their
+`ctx` (the call: `name`, `caller`, `log`), secrets and resources; **`@winche/admin`** is the project's data
+(documents, files, the app's users, assets, calling functions), the same SDK console pages and other servers use. In
+functions it acts with the server's rights.
+
 | Package | |
 | --- | --- |
-| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets (`ctx.secrets`), console pages and actions. Deployed through the console (`winche functions deploy`, as you or a CI token). |
-| `Winche.Functions.Database` | `ctx.documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database, with the server's rights. |
-| `Winche.Functions.Storage` | `ctx.files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
-| `Winche.Functions.Auth` | `ctx.auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
-| `Winche.Functions.Assets` | `ctx.assets`: channels, releases and their files (Winche Assets), and the `assets.onReleased` / `onChannelMoved` triggers. |
+| `Winche.Functions` | Deploying (bundled with `deno bundle`, every version kept, roll back), running, callables (`POST /functions/v1/call/{name}`), schedules, secrets, console pages; `functions.call` for @winche/admin. Deployed through the console (`winche functions deploy`, as you or a CI token). |
+| `Winche.Functions.Database` | @winche/admin's `documents`: references, queries, counts and aggregations, transforms, batches, transactions, `expand` — as winche_database. |
+| `Winche.Functions.Storage` | @winche/admin's `files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
+| `Winche.Functions.Auth` | @winche/admin's `auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
+| `Winche.Functions.Assets` | @winche/admin's `assets`: channels, releases and their files (Winche Assets), and the `onAssets.released` / `channelMoved` triggers. |
 
 ## Install
 
@@ -53,7 +59,7 @@ builder.Services.AddWincheHooks(o => o.ConnectionString = conn);          // tri
 builder.Services.AddWincheFunctions(o => o.ConnectionString = conn);
 builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth()
     .AddWincheFunctionsForAssets();
-builder.Services.AddWincheCaller(WincheClaims.FromAsync);                // ctx.auth for callables (Winche.Core)
+builder.Services.AddWincheCaller(WincheClaims.FromAsync);                // ctx.caller for callables (Winche.Core)
 // The events come from the packages themselves: o.UseHooks(h => h.PublishChanges()) in AddWincheDatabase and
 // AddWincheStorage; Winche Auth publishes its user events on its own.
 app.UseWincheCaller();
@@ -89,7 +95,7 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   ones go after five minutes, down to `minInstances`. Projects, versions and functions never share instances.
 - **Module state lasts between runs** on the same worker: keep a client or a parsed file at the top of the module to
   reuse it, but never one caller's data (the next run may be someone else's). A run must `await` what it starts:
-  `ctx.documents`, `ctx.files` or `ctx.auth` called after it has answered is refused. `{ fresh: true }` gives a
+  @winche/admin called after it has answered is refused. `{ fresh: true }` gives a
   function a new sandbox for every run, with nothing kept, at the cost of loading its code each time (milliseconds for
   a small bundle, tens of them for a large one).
 
@@ -131,44 +137,47 @@ deployment's `minInstances` are loaded: a readiness check can wait for it.
 services' webhooks. It gets a standard `Request` and returns a `Response`, text, JSON, or nothing (204).
 
 ```ts
-import { http, HttpsError } from "@winche/functions";
+import { http, HttpsError, secrets } from "@winche/functions";
+import { documents, files } from "@winche/admin";
 
 // A link sent by email, valid for days: /functions/v1/http/download/<token>
-export const download = http.onRequest(async (req, ctx) => {
+export const download = http.onRequest(async (req) => {
   const token = new URL(req.url).pathname.split("/").pop();
-  const link = await ctx.documents.doc(`downloadLinks/${token}`).get();
+  const link = await documents.doc(`downloadLinks/${token}`).get();
   if (!link.exists) throw new HttpsError("not-found", "This link has ended.");
-  return Response.redirect((await ctx.files.child(link.get("path")).downloadUrl()).url, 302);
+  return Response.redirect((await files.child(link.get("path")).downloadUrl()).url, 302);
 }, { methods: ["GET"] });
 
 // Another service's webhook, checked with its signing secret.
-export const paymentEvents = http.onRequest(async (req, ctx) => {
+const paymentsSecret = secrets.define("PAYMENTS_SECRET");
+export const paymentEvents = http.onRequest(async (req) => {
   const body = await req.text();
-  if (!(await validSignature(body, req.headers.get("x-signature"), ctx.secrets.get("PAYMENTS_SECRET"))))
+  if (!(await validSignature(body, req.headers.get("x-signature"), paymentsSecret.value())))
     return new Response("bad signature", { status: 401 });
   // …
   return { ok: true };
-}, { methods: ["POST"], secrets: ["PAYMENTS_SECRET"] });
+}, { methods: ["POST"], secrets: [paymentsSecret] });
 ```
 
 - **Open to anyone:** there's no signed-in caller (`ctx.caller` is null). Check what you need yourself: a signature, a
-  token in the link, an API key from `ctx.secrets`.
+  token in the link, an API key from a secret.
 - `methods` limits them (others get 405); every method by default. `req.ip` is the caller's address.
 - Request bodies up to 1 MB (`FunctionsOptions.MaxHttpRequestBytes`); larger ones get 413. A thrown `HttpsError` is an
   error answer with its status and message, as for callables.
 - They can't be called as callables, and callables can't be reached here.
 
-## Documents, files and users
+## Documents, files and users (@winche/admin)
 
-`ctx.documents`, `ctx.files` and `ctx.auth` read like the Dart SDKs (winche_database, winche_storage): you get a
-**reference** from the service, `get()` returns a **snapshot**, and a snapshot's `reference` leads back. They act with
-the server's rights: access rules don't apply.
+`documents`, `files` and `auth` from `@winche/admin` read like the Dart SDKs (winche_database, winche_storage): you get
+a **reference** from the service, `get()` returns a **snapshot**, and a snapshot's `reference` leads back. In functions
+they act with the server's rights: access rules don't apply, unless the function acts as one of the app's users
+(below).
 
 ```ts
-import { schedule, callable, FieldValue, Filter, Aggregate, Link } from "@winche/functions";
+import { schedule } from "@winche/functions";
+import { documents as db, FieldValue, Filter, Aggregate } from "@winche/admin";
 
-export const tidy = schedule("0 3 * * *", async (_e, ctx) => {
-  const db = ctx.documents;
+export const tidy = schedule("0 3 * * *", async () => {
   const visits = db.collection("visits");                               // or db.doc("patients/p1").collection("visits")
   const old = await visits.where("at", "<", daysAgo(90)).orderBy("at").limit(500).get();
   const batch = db.batch();
@@ -203,12 +212,12 @@ export const tidy = schedule("0 3 * * *", async (_e, ctx) => {
   else it runs again (up to `maxAttempts`, default 5). Read before writing.
 
 ```ts
-export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
-  const report = ctx.files.child("reports").child("weekly.pdf");        // a ChildReference
+export const weeklyReport = schedule("0 6 * * 1", async () => {
+  const report = files.child("reports").child("weekly.pdf");            // a ChildReference
   await report.putData(await makePdf(), { mimeType: "application/pdf", contentDisposition: 'attachment; filename="weekly.pdf"' });
   const { url, expiresAt } = await report.downloadUrl();                // a link to send on
-  const clip = await ctx.files.child("media/clip").putFromUrl(signedUrl, { headers: { authorization: `Bearer ${token}` } });
-  const folder = await ctx.files.child("reports").listChildren();       // files and folders
+  const clip = await files.child("media/clip").putFromUrl(signedUrl, { headers: { authorization: `Bearer ${token}` } });
+  const folder = await files.child("reports").listChildren();           // files and folders
 });
 ```
 
@@ -219,18 +228,18 @@ export const weeklyReport = schedule("0 6 * * 1", async (_e, ctx) => {
   it), `downloadUrl()`.
 - `getData` and `putData` move up to 32 MB through the function; `putFromUrl` copies up to 5 GB on the server
   (from a bucket's signed or authorized link), never through the function. A write is an upload like any other:
-  `files.onUploaded` triggers and webhooks run.
+  `onFile.uploaded` triggers and webhooks run.
 
 ```ts
-export const promote = callable(async (data: { uid: string }, ctx) => {
-  const user = ctx.auth.user(data.uid);                                  // a UserReference
+export const promote = callable(async (data: { uid: string }) => {
+  const user = auth.user(data.uid);                                      // a UserReference
   await user.setCustomClaims({ ...(await user.getCustomClaims()), role: "admin" });
   const snap = await user.get();                                         // a UserSnapshot
   return { email: snap.data?.email, claims: snap.customClaims };
 });
 ```
 
-- **Users:** `ctx.auth.user(uid)` gives a `UserReference`: `get()` (`exists`, `data`: email, name, providers,
+- **Users:** `auth.user(uid)` gives a `UserReference`: `get()` (`exists`, `data`: email, name, providers,
   claims, …), `getCustomClaims()`, `setCustomClaims(claims)` (in the user's next token).
 - **References in documents:** a reference written into a document (`db.doc(…)`, `files.child(…)`,
   `auth.user(…)`, or `Link.document / file / user`) is stored typed and reads back as a `Link` (`kind`, `target`).
@@ -239,19 +248,55 @@ export const promote = callable(async (data: { uid: string }, ctx) => {
   4 deep, the database's `ExpandLimit` (default 100) per call at most.
 - **Trigger events** carry the same snapshots: a document event's `data` and `before` (`exists` false when created or
   deleted), a file event's `file`, a user event's `user`.
+- **Calling functions:** `functions.call("name", data)` runs a callable and returns its result (an `HttpsError`
+  arrives as a `WincheError` with its code).
+
+### Acting as one of the app's users
+
+`as(user)` gives the same API acting as one of the app's users (`ctx.caller` in a callable): every documents and files
+call is checked against the project's access rules for them, as if the app had made it, and refused with
+`permission-denied`; `functions.call` passes them as the caller. The plain SDK stays available beside it:
+
+```ts
+import { callable } from "@winche/functions";
+import * as admin from "@winche/admin";
+
+export const leaveWard = callable(async (data: { ward: string }, ctx) => {
+  const me = admin.as(ctx.caller!);
+  await me.documents.doc(`wards/${data.ward}/members/${ctx.caller!.uid}`).delete();          // the rules decide
+  await admin.documents.collection("audit").add({ who: ctx.caller!.uid, left: data.ward });   // the function's own record
+});
+```
+
+`recursiveDelete` stays the server's; a folder delete as a user goes file by file, each checked. `auth` and `assets`
+have no rules for app users and refuse `as(user)`.
+
+### From console pages and other servers
+
+The same SDK works outside functions: in a console page it acts as the person who opened the page (see Console
+pages); anywhere else `initializeAdmin({ server, project, token })` acts as the token's account. Either way their role
+in the project limits it: a viewer reads; a member also writes documents, files and the app's users; an admin may also
+call functions. The npm package is built from the same source (`npm/admin`).
 
 ## Resources
 
 The functions folder's `resources/` folder is deployed with the code: files the code needs, such as fonts, templates
-and translations it renders with. Functions read them with `ctx.resources`:
+and translations it renders with. Declare one (a handle) and read it while a function runs:
 
 ```ts
-const de = JSON.parse((await ctx.resources.readText("translations/de.json"))!);
-const font = await ctx.resources.read("fonts/Roboto-400.ttf");      // Uint8Array, or null when there's none
-const all = await ctx.resources.list("translations");                // ["translations/de.json", …]
+import { resources } from "@winche/functions";
+
+const german = resources.define("translations/de.json");
+const font = resources.define("fonts/Roboto-400.ttf");
+
+// in a function:
+const de = JSON.parse((await german.text())!);
+const bytes = await font.bytes();                                     // Uint8Array, or null when there's none
+const all = await resources.list("translations");                    // ["translations/de.json", …]
 ```
 
 - Read-only, and part of the deployment: they change only when it does, and rolling back brings the old ones back.
+- Read while a function runs: at a module's top level (before any run) they throw.
 - `winche functions deploy` sends each file's SHA-256 first and uploads only contents the server doesn't have, so a
   large font goes up once, not on every deploy. Contents are kept once, in the project's database, however many
   versions use them. Up to 2000 resources, 64 MB each.
@@ -260,24 +305,25 @@ const all = await ctx.resources.list("translations");                // ["transl
 
 ## Assets
 
-`ctx.assets` reads the app's assets (Winche Assets: content published from the CLI as releases, followed through
+`assets` (@winche/admin) reads the app's assets (Winche Assets: content published from the CLI as releases, followed through
 channels) with the server's rights — no rules. Not to be confused with resources, which are the function's own files.
 
 ```ts
-import { assets, callable } from "@winche/functions";
+import { callable, onAssets } from "@winche/functions";
+import { assets } from "@winche/admin";
 
-export const strings = callable(async (p: { lang: string }, ctx) => {
-  const release = await ctx.assets.channel("production").get();   // the release it points at, or null
+export const strings = callable(async (p: { lang: string }) => {
+  const release = await assets.channel("production").get();       // the release it points at, or null
   return release?.file(`translations/${p.lang}.json`).json();     // also bytes(), text(), downloadUrl()
 });
 
 // A release published (released), or a channel pointed at one (channelMoved); { channel } narrows it.
-export const announce = assets.onReleased(async (e, ctx) => {
+export const announce = onAssets.released(async (e, ctx) => {
   ctx.log(`Release #${e.release} on ${e.channel}: ${e.note}`);
 }, { channel: "production" });
 ```
 
-`ctx.assets.release(n)`, `channels()` and `releases()` list the rest. A file is read whole, up to 32 MB; larger ones
+`assets.release(n)`, `channels()` and `releases()` list the rest. A file is read whole, up to 32 MB; larger ones
 through `downloadUrl()`.
 
 ## Describing a function
@@ -298,48 +344,45 @@ export const strings = callable(async (data: { lang: string }, ctx) => …, {
 
 API keys and passwords a function needs (an email service's key, another service's client secret) are **secrets**: set
 in the console (the **Secrets** page) or with `winche functions secrets:set NAME`, kept encrypted with the master key, and
-never shown again. A function declares the ones it reads, and only gets those:
+never shown again. Declare each once (a handle), give it to the functions that read it, and read its value while one
+runs:
 
 ```ts
-export const sendReport = documents.onCreated("reports/{id}", async (e, ctx) => {
-  const key = ctx.secrets.get("MAIL_API_KEY");          // throws when it isn't declared or isn't set
+import { onDocument, secrets } from "@winche/functions";
+
+const mailKey = secrets.define("MAIL_API_KEY");
+
+export const sendReport = onDocument.created("reports/{id}", async () => {
+  const key = mailKey.value();                         // the current value; throws when not listed or not set
   await fetch("https://mail.example.com/send", { method: "POST", headers: { authorization: `Bearer ${key}` }, body: "…" });
-}, { secrets: ["MAIL_API_KEY"] });
+}, { secrets: [mailKey] });
 ```
 
 - **Names:** capitals, digits and underscores, starting with a letter (`MAIL_API_KEY`).
+- **Only the functions that list it** may read it: another one's `value()` throws, naming both. `isSet()` says whether
+  it's set. The admin SDK never has secrets, so pages and other servers can't read them.
 - **Changes** apply from the next run; there's nothing to deploy.
 - **Logs and errors** show `••••` in place of a secret's value (values of 4 characters or more).
-- **The console lists** each secret's name, when and by whom it was set, and which functions declare it, including the
-  ones a function declares but nobody has set yet.
+- **The console lists** each secret's name, when and by whom it was set, and which functions list it, including the
+  ones a function lists but nobody has set yet.
 - **References:** a secret can instead say where it's kept (`aws-ssm:/app/mail-key`, `aws-sm:app/ses#secretAccessKey`,
   with Winche.Secrets.Aws): read when a function runs, kept a few minutes. One that can't be read fails the run with
   `failed-precondition` and the reason (never a value). See Winche.Secrets.
 - They're kept by Winche.Secrets, which needs Winche.Core's `AddWincheConfig` with a master key (Winche Server has it);
-  a deployment that declares secrets without it is refused.
+  a deployment whose functions list secrets without it is refused.
 
 ## Console pages
 
 A project can add pages of its own to the console: dashboards, admin tools, anything its team needs. The page is
 yours: plain HTML, JavaScript and CSS, or the build output of any framework, in a folder next to `index.ts`. The console
-shows it in its sidebar (under **Project pages**) and has no say in how it looks. What it shows comes from **console
-actions**: functions only the console can run, for someone whose role in the project is high enough.
+shows it in its sidebar (under **Project pages**) and has no say in what it does or how it looks. In it,
+`@winche/admin` acts as the person who opened it, limited by their role in the project.
 
 ```ts
-import { consolePage, consoleAction, HttpsError } from "@winche/functions";
+import { pages } from "@winche/functions";
 
 // console/reports/index.html (and its scripts, styles, images) is the page.
-export const reports = consolePage({ title: "Reports", files: "console/reports", icon: "chart-bar", minRole: "viewer" });
-
-export const weeklyCounts = consoleAction(async (data: { weeks: number }, ctx) => {
-  const visits = await ctx.documents.collection("visits").where("at", ">=", weeksAgo(data.weeks)).count();
-  return { visits };
-}, { minRole: "viewer" });
-
-export const closeWard = consoleAction(async (data: { ward: string }, ctx) => {
-  if (!data.ward) throw new HttpsError("invalid-argument", "Which ward?");
-  await ctx.documents.doc(`wards/${data.ward}`).update({ closedBy: ctx.console!.user.email, closedAt: new Date() });
-}, { minRole: "admin" });
+export const reports = pages({ title: "Reports", files: "console/reports", icon: "chart-bar", minRole: "viewer" });
 ```
 
 ```html
@@ -355,82 +398,96 @@ export const closeWard = consoleAction(async (data: { ward: string }, ctx) => {
 ```
 
 ```js
-// console/reports/app.js — window.winche is there before your scripts run.
-await winche.ready;
-const { visits } = await winche.call("weeklyCounts", { weeks: 4 });
+// console/reports/app.js — the console resolves @winche/admin for the page.
+import { documents } from "@winche/admin";
+
+const visits = await documents.collection("visits").where("at", ">=", weeksAgo(4)).count();
 document.querySelector("#count").textContent = `${visits} in the last 4 weeks`;
-document.querySelector("#close").hidden = winche.user.role !== "admin";
 document.querySelector("#close").onclick = async () => {
-  if (!(await winche.confirm("Close ward 3? Nobody can be admitted there until it's opened again.", { danger: true }))) return;
-  try { await winche.call("closeWard", { ward: "3" }); winche.toast("Ward 3 closed", "success"); }
-  catch (e) { winche.toast(e.message, "error"); }   // e.code: permission-denied, invalid-argument, …
+  if (!confirm("Close ward 3? Nobody can be admitted there until it's opened again.")) return;
+  try { await documents.doc("wards/3").update({ closedAt: new Date() }); }
+  catch (e) { alert(e.message); }   // e.code: permission-denied (a viewer), …
 };
 ```
 
-**`window.winche`** in a page:
-
-| | |
-| --- | --- |
-| `ready` | A promise: resolves once the page is connected to the console (`user` and `theme` are set). |
-| `call(name, data)` | Runs a console action as the signed-in person: its result, or an error with `code` and `message`. |
-| `user` | `{ email, role }`: role is `viewer`, `member` or `admin`, to show only what they can use. |
-| `theme` | `{ scheme: "light" \| "dark", colors, font }`, also as CSS variables (`--winche-page`, `--winche-card`, `--winche-text`, `--winche-muted`, `--winche-border`, `--winche-accent`, `--winche-font`…) and `data-winche-theme` on `<html>`; a `winche:theme` event when it changes. Use them or not. |
-| `confirm(text, { danger, confirmLabel })` | The console's own confirmation dialog: true or false. |
-| `toast(text, kind)` | A notice in the console (`info`, `success`, `error`). |
-| `navigate(path)` | Goes to a console page, e.g. `/database` or `/authentication/users`. |
-| `setTitle(text)` | A line under the page's title. |
-
-- **Options:** `consolePage({ title, files, icon, minRole, order })`. `files` is the folder; it must have an
-  `index.html`. `icon` is a [Tabler icon](https://tabler.io/icons) name. `minRole` (default `viewer`) decides who sees
-  it. `order` (default 0) sorts the sidebar. `consoleAction(handler, { minRole, timeoutSeconds, secrets })`: `minRole`
-  defaults to `admin`.
-- **Roles are checked on the server** for every action (hiding a button is only for looks). An admin-only action asks
-  for two-step sign-in where the console requires it for settings. Every run is logged with who ran it, and
-  `ctx.console.user` says who in the action. Actions run with the server's rights, like every function: `ctx.documents`,
-  `ctx.files`, `ctx.auth`, `ctx.secrets`.
-- **Apps can't call actions**, and pages can't call callables: `/functions/v1/call` only runs callables.
+- **Options:** `pages({ title, files, icon, minRole, order })`. `files` is the folder; it must have an `index.html`.
+  `icon` is a [Tabler icon](https://tabler.io/icons) name. `minRole` (default `viewer`) decides who sees it. `order`
+  (default 0) sorts the sidebar.
+- **Roles are checked on the server** for every call: a viewer reads; a member also writes documents, files and the
+  app's users. Pages can't call functions (callables are the apps'). Writes show in the document history as the
+  person's.
+- **Work that needs the server's rights** (another service's API with a secret, a long job) is asked for with a
+  document the page writes, e.g. `jobs/{id}` with `{ action, data }`: an `onDocument.created` trigger does it with the
+  server's rights and writes the answer or progress back to that document, which the page reads. Whoever may write
+  there may ask.
 - **Sandboxed:** the page runs in a frame with an origin of its own and no cookies of the console's, so it can't call
-  the console's API or read its session. Its scripts, styles, images and fonts come from its own folder (or inline);
-  it can't fetch from the network (`connect-src 'none'`): everything goes through `winche.call`. Links it opens go
-  to a new tab. If it navigates the frame elsewhere, it's disconnected and asks to be reloaded.
+  the console's API or read its session: its @winche/admin calls go to the console over a channel only it holds. Its
+  scripts, styles, images and fonts come from its own folder (or inline); it can't fetch from the network
+  (`connect-src 'none'`). Links it opens go to a new tab. If it navigates the frame elsewhere, it's disconnected and
+  asks to be reloaded.
+- **Built pages:** a bundler leaves `@winche/admin` out (Vite: `build.rollupOptions.external: ["@winche/admin"]`,
+  `base: "./"`); the CLI builds pages named in `winche.json` (`"pages"`) when it deploys.
 - **Files:** `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.svg`, `.txt`, `.png`, `.jpg`, `.gif`, `.webp`, `.ico`,
   `.woff`, `.woff2`, deployed with `winche functions deploy` (images and fonts as base64). They're versioned and
   rolled back with the functions.
-- The emulators have no console: test a page's actions by calling them from your tests.
+- The emulators have no console.
 
 ## Before-functions
 
 They run **before** a write is saved, inside it, and can refuse it or change it:
 
 ```ts
-import { documents, files, users, HttpsError } from "@winche/functions";
+import { onDocument, onFile, onUser, HttpsError } from "@winche/functions";
 
-export const guardRecords = documents.beforeWrite("records/{id}", async (e, ctx) => {
+export const guardRecords = onDocument.willBeWritten("records/{id}", async (e, ctx) => {
   if (e.before.get("signedOff")) throw new HttpsError("permission-denied", "This record is signed off.");
   if (e.operation !== "delete") return { set: { updatedBy: e.caller?.uid ?? "server" }, remove: ["draft"] };
 });
 
-export const scans = files.beforeWrite("scans/{rest=**}", async (e) => ({ metadata: { checked: false }, cacheControl: "private" }));
+export const scans = onFile.willBeWritten("scans/{rest=**}", async (e) => ({ metadata: { checked: false }, cacheControl: "private" }));
 
-export const closedDomains = users.beforeCreate(async (e) => {
+export const closedDomains = onUser.willBeCreated(async (e) => {
   if (e.email?.endsWith("@example.org")) throw new HttpsError("permission-denied", "Sign-ups from that domain are closed.");
 });
-export const gate = users.beforeSignIn(async (e) => { /* e.user, e.provider, e.ipAddress */ });
+export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ipAddress */ });
 ```
 
-- **When:** `documents.beforeWrite` and `files.beforeWrite` run after the access rules, for apps' writes and the server's own
-  (each document of a batch or recursive delete, each file under a deleted folder). `users.beforeCreate` and
-  `users.beforeSignIn` run on every sign-up and sign-in (after the credentials check out).
+- **When:** `onDocument.willBeWritten` and `onFile.willBeWritten` run after the access rules, for apps' writes and the server's own
+  (each document of a batch or recursive delete, each file under a deleted folder). `onUser.willBeCreated` and
+  `onUser.willSignIn` run on every sign-up and sign-in (after the credentials check out).
 - **Refusing:** throw `HttpsError`: the caller gets `permissionDenied` (sign-ups and sign-ins: `DENIED`) with its message,
   and nothing is saved.
 - **Changing:** documents return `{ set: { "dotted.path": value }, remove: ["field"] }`; files return
   `{ metadata: { key: value | null }, contentDisposition, cacheControl }`. A delete can only be refused. Several
   before-functions on one path run in export order, each seeing the previous one's changes.
 - **Quick, and reading only:** 5 seconds unless `timeoutSeconds` says otherwise (at most 30): the write, and its locks,
-  wait for it. `ctx.documents`, `ctx.files` and `ctx.auth` only read here; side effects belong in `onCreated`… triggers.
+  wait for it. @winche/admin only reads here; side effects belong in `onDocument.created`… triggers.
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
+
+## Upgrading to 3.0
+
+Data leaves `ctx` for its own SDK, and the trigger names say when they run. A deploy that still uses the old API is
+refused, naming each use and what replaces it.
+
+| 2.x | 3.0 |
+| --- | --- |
+| `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` | `import { documents, files, auth, assets } from "@winche/admin"` |
+| `ctx.secrets.get("KEY")`, `{ secrets: ["KEY"] }` | `const key = secrets.define("KEY")` (top level), `{ secrets: [key] }`, `key.value()` / `key.isSet()` |
+| `ctx.resources.read(path)` / `readText` / `list` / `has` | `resources.define(path).bytes()` / `text()` / `exists()`, `resources.list(folder)` |
+| `ctx.functionName` | `ctx.name` |
+| `documents.onCreated` / `onUpdated` / `onDeleted` / `onWritten` / `beforeWrite` | `onDocument.created` / `updated` / `deleted` / `written` / `willBeWritten` |
+| `files.onUploaded` / `onDeleted` / `onMetadataUpdated` / `beforeWrite` | `onFile.uploaded` / `deleted` / `metadataUpdated` / `willBeWritten` |
+| `users.onCreated` / `onDeleted` / `onSignedIn` / `onDisabled` / `beforeCreate` / `beforeSignIn` | `onUser.created` / `deleted` / `signedIn` / `disabled` / `willBeCreated` / `willSignIn` |
+| `assets.onReleased` / `onChannelMoved` | `onAssets.released` / `channelMoved` |
+| `consolePage(…)` | `pages(…)` |
+| `consoleAction(…)`, `ctx.console`, `window.winche` in pages | gone: pages use @winche/admin as their viewer; server work is asked for with a document a trigger answers |
+| `FieldValue`, `Filter`, `Link`, `DocumentSnapshot`, … from `@winche/functions` | from `@winche/admin` |
+
+New: `as(user)` (the access rules applied for one of the app's users), `functions.call`, `@winche/functions/testing`
+(`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche/admin` npm package for other servers.
+`winche functions init` (CLI 3) writes the three modules and their import names into `deno.json`.
 
 ## Upgrading to 2.0
 
