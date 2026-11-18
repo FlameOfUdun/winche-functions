@@ -13,12 +13,15 @@ public static class FunctionsSdk
     /// <summary>The SDKs' major version for <see cref="Protocol"/>.</summary>
     public const int Major = 3;
 
-    /// <summary>The packages a functions folder imports: name → its npm specifier (for deno.json's imports).</summary>
+    /// <summary>
+    /// The packages a functions folder imports: the name code imports (<c>@winche/…</c>) → its npm specifier (for
+    /// deno.json's imports). They're published under the <c>@winche-technologies</c> scope; <c>@winche/…</c> is the alias.
+    /// </summary>
     public static readonly IReadOnlyList<(string Name, string Specifier)> Packages =
     [
-        ("@winche/functions", $"npm:@winche/functions@^{Major}"),
-        ("@winche/functions/testing", $"npm:@winche/functions@^{Major}/testing"),
-        ("@winche/admin", $"npm:@winche/admin@^{Major}"),
+        ("@winche/functions", $"npm:@winche-technologies/functions@^{Major}"),
+        ("@winche/functions/testing", $"npm:@winche-technologies/functions@^{Major}/testing"),
+        ("@winche/admin", $"npm:@winche-technologies/admin@^{Major}"),
     ];
 
     /// <summary>The deno.json a functions folder starts with: the SDKs, from npm.</summary>

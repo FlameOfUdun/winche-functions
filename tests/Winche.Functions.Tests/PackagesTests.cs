@@ -15,15 +15,15 @@ public class PackagesTests(PostgresFixture pg)
     {
         var bundler = new FunctionBundler(new FunctionsOptions());
         Assert.Equal([
-            "The code imports @winche/admin, which deno.json doesn't name: add \"@winche/admin\": \"npm:@winche/admin@^3\" to its imports.",
-            "The code imports @winche/functions, which deno.json doesn't name: add \"@winche/functions\": \"npm:@winche/functions@^3\" to its imports.",
+            "The code imports @winche/admin, which deno.json doesn't name: add \"@winche/admin\": \"npm:@winche-technologies/admin@^3\" to its imports.",
+            "The code imports @winche/functions, which deno.json doesn't name: add \"@winche/functions\": \"npm:@winche-technologies/functions@^3\" to its imports.",
         ], bundler.MissingPackages(new Dictionary<string, string> { ["index.ts"] = Hello }));
         Assert.Empty(bundler.MissingPackages(new Dictionary<string, string>
         {
             ["index.ts"] = Hello,
             ["deno.json"] = FunctionsSdk.DenoJson,
         }));
-        Assert.Contains("\"@winche/functions/testing\": \"npm:@winche/functions@^3/testing\"", FunctionsSdk.DenoJson);
+        Assert.Contains("\"@winche/functions/testing\": \"npm:@winche-technologies/functions@^3/testing\"", FunctionsSdk.DenoJson);
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public class PackagesTests(PostgresFixture pg)
         var files = new Dictionary<string, string>
         {
             ["index.ts"] = Hello,
-            ["deno.json"] = """{ "imports": { "@winche/functions": "./vendor/functions/dist/index.js", "@winche/admin": "./vendor/admin/dist/index.js" } }""",
+            ["deno.json"] = """{ "imports": { "@winche/functions": "./vendor/functions/dist/index.js", "@winche/admin": "./vendor/admin/dist/index.js", "@winche-technologies/admin": "./vendor/admin/dist/index.js" } }""",
         };
         var root = Path.Combine(AppContext.BaseDirectory, "SdkPackages", "@winche");
         foreach (var name in new[] { "functions", "admin" })

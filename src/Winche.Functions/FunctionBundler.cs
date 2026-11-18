@@ -62,8 +62,11 @@ public sealed class FunctionBundler(FunctionsOptions options)
                 if (imports.ContainsKey(name)) continue;
                 var target = Path.Combine(dir, ".winche", "packages", name);
                 CopyFolder(folder, target);
+                // By the name code imports, and by the package's own (how other packages import it, e.g. @winche-technologies/admin).
+                var real = (JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "package.json")))?["name"]?.GetValue<string>()) ?? name;
                 foreach (var (subpath, file) in Exports(folder))
-                    if (!imports.ContainsKey(name + subpath)) imports[name + subpath] = $"./.winche/packages/{name}/{file}";
+                    foreach (var alias in new[] { name, real }.Distinct())
+                        if (!imports.ContainsKey(alias + subpath)) imports[alias + subpath] = $"./.winche/packages/{name}/{file}";
             }
             await File.WriteAllTextAsync(Path.Combine(dir, "deno.json"), config.ToJsonString(), ct);
 
