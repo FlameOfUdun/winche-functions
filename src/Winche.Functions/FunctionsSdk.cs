@@ -24,8 +24,16 @@ public static class FunctionsSdk
         ("@winche/admin", $"npm:@winche-technologies/winche-admin@^{Major}"),
     ];
 
-    /// <summary>The deno.json a functions folder starts with: the SDKs, from npm.</summary>
-    public static string DenoJson => "{\n  \"imports\": {\n" + string.Join(",\n", Packages.Select(p => $"    \"{p.Name}\": \"{p.Specifier}\"")) + "\n  }\n}";
+    /// <summary>The npm packages behind <see cref="Packages"/>.</summary>
+    public static readonly IReadOnlyList<string> NpmPackages = ["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"];
+
+    /// <summary>
+    /// The deno.json a functions folder starts with: the SDKs, from npm, exempt from Deno's wait for new versions (a
+    /// day, against compromised releases) so a new SDK can be used at once; every other package keeps it.
+    /// </summary>
+    public static string DenoJson =>
+        "{\n  \"imports\": {\n" + string.Join(",\n", Packages.Select(p => $"    \"{p.Name}\": \"{p.Specifier}\"")) + "\n  },\n"
+        + "  \"minimumDependencyAge\": {\n    \"age\": \"P1D\",\n    \"exclude\": [" + string.Join(", ", NpmPackages.Select(p => $"\"{p}\"")) + "]\n  }\n}";
 
     /// <summary>The Deno release Winche runs and tests with.</summary>
     public const string DenoVersion = "2.9.8";

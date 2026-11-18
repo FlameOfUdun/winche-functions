@@ -41,9 +41,16 @@ the server's rights. Each has its own repository (winche-functions-typescript-sd
     "@winche/functions": "npm:@winche-technologies/winche-functions@^3",
     "@winche/functions/testing": "npm:@winche-technologies/winche-functions@^3/testing",
     "@winche/admin": "npm:@winche-technologies/winche-admin@^3"
+  },
+  "minimumDependencyAge": {
+    "age": "P1D",
+    "exclude": ["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"]
   }
 }
 ```
+
+(Deno doesn't install npm versions younger than a day, against compromised releases; the SDKs are exempt, so a new
+one can be used at once, and every other package keeps the wait.)
 
 They're published under the `@winche-technologies` npm scope; `@winche/…` is the name code imports them by (an alias
 here, or `npm install @winche/admin@npm:@winche-technologies/winche-admin` for Node and bundlers). The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without

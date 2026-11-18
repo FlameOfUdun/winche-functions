@@ -24,6 +24,9 @@ public class PackagesTests(PostgresFixture pg)
             ["deno.json"] = FunctionsSdk.DenoJson,
         }));
         Assert.Contains("\"@winche/functions/testing\": \"npm:@winche-technologies/winche-functions@^3/testing\"", FunctionsSdk.DenoJson);
+        var config = System.Text.Json.Nodes.JsonNode.Parse(FunctionsSdk.DenoJson)!;
+        Assert.Equal(["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"],
+            config["minimumDependencyAge"]!["exclude"]!.AsArray().Select(e => e!.GetValue<string>()));
     }
 
     [Fact]
