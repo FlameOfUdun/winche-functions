@@ -38,15 +38,15 @@ the server's rights. Each has its own repository (winche-functions-typescript-sd
 ```json
 {
   "imports": {
-    "@winche/functions": "npm:@winche-technologies/functions@^3",
-    "@winche/functions/testing": "npm:@winche-technologies/functions@^3/testing",
-    "@winche/admin": "npm:@winche-technologies/admin@^3"
+    "@winche/functions": "npm:@winche-technologies/winche-functions@^3",
+    "@winche/functions/testing": "npm:@winche-technologies/winche-functions@^3/testing",
+    "@winche/admin": "npm:@winche-technologies/winche-admin@^3"
   }
 }
 ```
 
 They're published under the `@winche-technologies` npm scope; `@winche/…` is the name code imports them by (an alias
-here, or `npm install @winche/admin@npm:@winche-technologies/admin` for Node and bundlers). The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without
+here, or `npm install @winche/admin@npm:@winche-technologies/winche-admin` for Node and bundlers). The server bundles the versions the project names; it doesn't bring them. A deployment that imports one without
 naming it is refused, saying what to add. A server that can't reach npm (or a test) can provide them:
 `FunctionsOptions.ProvidedPackages["@winche/admin"] = folder` (the package's `package.json` and built files), used only
 where `deno.json` doesn't name the package. **Protocol:** the SDKs speak protocol 1 with this server; a function or

@@ -19,9 +19,9 @@ public static class FunctionsSdk
     /// </summary>
     public static readonly IReadOnlyList<(string Name, string Specifier)> Packages =
     [
-        ("@winche/functions", $"npm:@winche-technologies/functions@^{Major}"),
-        ("@winche/functions/testing", $"npm:@winche-technologies/functions@^{Major}/testing"),
-        ("@winche/admin", $"npm:@winche-technologies/admin@^{Major}"),
+        ("@winche/functions", $"npm:@winche-technologies/winche-functions@^{Major}"),
+        ("@winche/functions/testing", $"npm:@winche-technologies/winche-functions@^{Major}/testing"),
+        ("@winche/admin", $"npm:@winche-technologies/winche-admin@^{Major}"),
     ];
 
     /// <summary>The deno.json a functions folder starts with: the SDKs, from npm.</summary>
