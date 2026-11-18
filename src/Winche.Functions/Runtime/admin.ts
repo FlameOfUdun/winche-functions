@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT (npm/admin/LICENSE): unlike the rest of this repository, this file is MIT licensed.
+// SPDX-License-Identifier: MIT
 /**
  * @winche/admin — a Winche project's data: documents, files, the app's users, assets, and calling functions.
  *

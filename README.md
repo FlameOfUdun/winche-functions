@@ -276,7 +276,8 @@ have no rules for app users and refuse `as(user)`.
 The same SDK works outside functions: in a console page it acts as the person who opened the page (see Console
 pages); anywhere else `initializeAdmin({ server, project, token })` acts as the token's account. Either way their role
 in the project limits it: a viewer reads; a member also writes documents, files and the app's users; an admin may also
-call functions. The npm package is built from the same source (`npm/admin`).
+call functions. The SDK has its own repository, winche-admin-typescript-sdk (the npm package `@winche/admin`, MIT);
+this one carries a pinned copy (`scripts/update-admin-sdk.sh`).
 
 ## Resources
 
@@ -486,7 +487,8 @@ refused, naming each use and what replaces it.
 | `FieldValue`, `Filter`, `Link`, `DocumentSnapshot`, … from `@winche/functions` | from `@winche/admin` |
 
 New: `as(user)` (the access rules applied for one of the app's users), `functions.call`, `@winche/functions/testing`
-(`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche/admin` npm package for other servers.
+(`withSecrets`, `withResources`, `withServer`, `testContext`) and the `@winche/admin` npm package for other servers
+(its own repository, winche-admin-typescript-sdk).
 `winche functions init` (CLI 3) writes the three modules and their import names into `deno.json`.
 
 ## Upgrading to 2.0
@@ -515,5 +517,6 @@ New: `as(user)` (the access rules applied for one of the app's users), `function
 
 ## License
 
-Elastic License 2.0 (`LICENSE`), except the admin SDK, `@winche/admin` (`src/Winche.Functions/Runtime/admin.ts` and
-the npm package in `npm/admin`), which is MIT (`npm/admin/LICENSE`).
+Elastic License 2.0 (`LICENSE`), except `src/Winche.Functions/Runtime/admin.ts`: the admin SDK (`@winche/admin`), a
+pinned copy from its own repository, winche-admin-typescript-sdk (MIT). `scripts/update-admin-sdk.sh` updates it and
+records the commit in `Runtime/admin-sdk.json`.
