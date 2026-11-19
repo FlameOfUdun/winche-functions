@@ -504,6 +504,16 @@ export default plugin((p) => {
 }
 ```
 
+- **The manifest** can also say:
+  - `billing`: what it may cost beside the server, shown before installing.
+  - `section` on a setting: settings of one section are shown together.
+  - `showIf` on a setting or secret, `{ "setting": "MODE", "is": "office" }` (or a list) or `{ "setting": "URL", "set": true }`:
+    shown, and needed when required, only then.
+  - `setup`: steps to do after installing (add a webhook in the other service…), `{ "text": "…", "showIf": … }` each, shown
+    on the installed copy's page with `{{function:name}}` (that function's address), `{{setting:NAME}}`,
+    `{{secret:NAME}}` (the copy's project secret) and `{{id}}` filled in.
+  The console's page about a package shows its README.md and its package.json's description, author, homepage, repository
+  and license; npm packages with the keyword `winche-plugin` are found by its search.
 - **Installing** a copy under an id (lowercase letters, digits and `-`, e.g. `sms`) is a new functions version: its
   functions run beside the project's own as `<id>.<name>` (`sms.send`), with the same instances, logs and limits.
   Two copies of a package (other ids, other settings) are two sets of functions.

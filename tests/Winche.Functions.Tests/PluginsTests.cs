@@ -243,6 +243,92 @@ public class PluginsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public void Settings_show_and_are_needed_only_where_their_condition_holds_and_setup_steps_name_what_exists()
+    {
+        var m = PluginManifest.Parse("""
+            { "title": "Calls", "billing": "The service charges per call.",
+              "settings": {
+                "MODE": { "label": "Mode", "type": "select", "options": ["account", "office"], "default": "account", "section": "Calls" },
+                "OFFICE": { "label": "Office phone", "required": true, "section": "Calls", "showIf": { "setting": "MODE", "is": "office" } },
+                "URL": { "label": "Address" }
+              },
+              "secrets": { "KEY": { "label": "Key", "showIf": { "setting": "URL", "set": true } } },
+              "setup": [{ "text": "Point the service at {{function:hook}} with {{secret:KEY}}.", "showIf": { "setting": "URL", "set": true } }] }
+            """, "t");
+        Assert.Equal("Calls", m.Settings["OFFICE"].Section);
+        PluginSettings.Resolve(m, Settings(), out var asAccount);
+        Assert.Empty(asAccount);                                    // OFFICE isn't shown: not needed
+        PluginSettings.Resolve(m, Settings(("MODE", "office")), out var asOffice);
+        Assert.Contains(asOffice, p => p.Contains("Office phone (OFFICE) is needed"));
+        Assert.True(m.Setup[0].ShowIf!.Holds(Settings(("URL", "https://x"))));
+        Assert.False(m.Setup[0].ShowIf!.Holds(Settings(("URL", ""))));
+        Assert.True(new PluginCondition { Setting = "MODE", Is = new JsonArray("a", "office") }.Holds(Settings(("MODE", "office"))));
+
+        var bad = Assert.Throws<FunctionDeployException>(() => PluginManifest.Parse("""
+            { "title": "x", "settings": { "A": { "label": "A", "showIf": { "setting": "NOPE", "is": 1 } }, "B": { "label": "B", "showIf": { "setting": "A" } } },
+              "setup": [{ "text": "{{setting:GONE}} and {{secret:NONE}}" }] }
+            """, "p"));
+        Assert.Contains(bad.Problems, p => p.Contains("showIf names NOPE"));
+        Assert.Contains(bad.Problems, p => p.Contains("showIf says is"));
+        Assert.Contains(bad.Problems, p => p.Contains("{{setting:GONE}} isn't one of its settings"));
+        Assert.Contains(bad.Problems, p => p.Contains("{{secret:NONE}} isn't one of its secrets"));
+    }
+
+    [Fact]
+    public async Task Packages_say_what_they_are_their_versions_and_searches_find_them()
+    {
+        var v1 = Package("text-plugin", "1.0.0", Manifest, Code);
+        var v2 = Package("text-plugin", "1.2.0", Manifest, Code);
+        File.WriteAllText(Path.Combine(v2, "README.md"), "# Text messages\n\nSends texts.");
+        File.WriteAllText(Path.Combine(v2, "package.json"), """{ "name": "text-plugin", "version": "1.2.0", "main": "./index.js", "description": "Texts.", "author": { "name": "Acme" }, "repository": { "url": "git+https://github.com/acme/text-plugin.git" }, "license": "MIT" }""");
+        var options = new FunctionsOptions { PluginRegistry = "https://registry.test/" };
+        options.ProvidedPlugins["text-plugin"] = v2;
+        options.ProvidedPlugins["text-plugin@1.0.0"] = v1;
+        options.ProvidedPlugins["text-plugin@1.2.0"] = v2;
+        var npm = new FakeRegistry
+        {
+            ["/-/v1/search"] = Json("""{ "objects": [{ "package": { "name": "@acme/payments", "version": "2.1.0", "description": "Payments.", "publisher": { "username": "acme" }, "date": "2026-11-01T00:00:00Z" } }] }"""),
+        };
+        var packages = new PluginPackages(options, new PluginRegistryHttp(new HttpClient(npm)));
+        var about = (await packages.GetAsync("text-plugin", null)).About;
+        Assert.Equal(("Texts.", "Acme", "https://github.com/acme/text-plugin", "MIT"), (about.Description, about.Author, about.Repository, about.License));
+        Assert.StartsWith("# Text messages", about.Readme);
+        Assert.Equal(["1.2.0", "1.0.0"], (await packages.VersionsAsync("text-plugin")).Select(v => v.Version));
+        var found = await packages.SearchAsync("");
+        Assert.Equal([("text-plugin", true), ("@acme/payments", false)], found.Select(f => (f.Package, f.Provided)));
+        Assert.Equal("acme", found[1].Publisher);
+        Assert.Equal(["text-plugin"], (await packages.SearchAsync("text")).Where(f => f.Provided).Select(f => f.Package));
+
+        // From npm: the README and package.json come out of the package file too.
+        var tgz = Tarball(("package/package.json", """{ "name": "@acme/payments", "version": "2.1.0", "homepage": "https://acme.test" }"""), ("package/winche-plugin.json", Manifest), ("package/readme.md", "Hello"));
+        var registry = new FakeRegistry
+        {
+            ["/@acme%2Fpayments/latest"] = Json($$"""{ "version": "2.1.0", "dist": { "tarball": "https://registry.test/p.tgz", "integrity": "sha512-{{Convert.ToBase64String(SHA512.HashData(tgz))}}" } }"""),
+            ["/p.tgz"] = tgz,
+            ["/@acme%2Fpayments"] = Json("""{ "versions": { "2.0.0": {}, "2.1.0": {} }, "time": { "2.0.0": "2026-10-01T00:00:00Z", "2.1.0": "2026-11-01T00:00:00Z" } }"""),
+        };
+        var fromNpm = new PluginPackages(new FunctionsOptions { PluginRegistry = "https://registry.test/" }, new PluginRegistryHttp(new HttpClient(registry)));
+        var pay = await fromNpm.GetAsync("@acme/payments", null);
+        Assert.Equal(("https://acme.test", "Hello"), (pay.About.Homepage, pay.About.Readme));
+        Assert.Equal([("2.1.0", 2026, 11), ("2.0.0", 2026, 10)], (await fromNpm.VersionsAsync("@acme/payments")).Select(v => (v.Version, v.At!.Value.Year, v.At.Value.Month)));
+    }
+
+    [Fact]
+    public async Task An_installed_copy_has_its_history()
+    {
+        var folder = Package("text-plugin", "1.0.0", Manifest, Code);
+        await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync(), o => o.ProvidedPlugins["text-plugin"] = folder);
+        var functions = app.Service<WincheFunctions>();
+        await functions.InstallPluginAsync(new("sms", "text-plugin", Settings: Settings(("FROM", "+441"))), "ann@x");
+        await functions.DeployAsync(new Dictionary<string, string> { ["index.ts"] = "export {};" }, "Own code", "dev@x");
+        await functions.ConfigurePluginAsync("sms", Settings(("FROM", "+442"), ("QUEUE", "texts")), "ann@x");
+        await functions.UninstallPluginAsync("sms", "bob@x");
+        var history = await functions.PluginHistoryAsync("sms");
+        Assert.Equal(["Removed", "Settings changed: FROM, QUEUE", "Installed text-plugin 1.0.0"], history.Select(h => h.What));
+        Assert.Equal(["bob@x", "ann@x", "ann@x"], history.Select(h => h.By));
+    }
+
+    [Fact]
     public void Manifests_are_checked()
     {
         var bad = Assert.Throws<FunctionDeployException>(() => PluginManifest.Parse("""

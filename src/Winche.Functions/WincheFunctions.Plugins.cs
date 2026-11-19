@@ -3,6 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Winche.Functions;
 
+/// <summary>A change to an installed copy, as the functions version that made it.</summary>
+public sealed record PluginHistoryEntry(int Version, string What, string? Note, string? By, DateTimeOffset At, int? RolledBackFrom);
+
 /// <summary>A plugin copy as the console lists it: the install, its newest version, and the secrets it still needs.</summary>
 public sealed record PluginInstallInfo(PluginInstall Install, string? Latest, IReadOnlyList<string> SecretsNeeded, IReadOnlyList<string> Functions);
 
@@ -109,9 +112,40 @@ public sealed partial class WincheFunctions
         foreach (var p in d.PluginList)
         {
             var latest = checkUpdates ? await Packages.LatestAsync(p.Package, ct) : null;
-            var needed = p.Manifest.Secrets.Where(s => s.Value.Required && !set.Contains(p.SecretFor(s.Key))).Select(s => p.SecretFor(s.Key)).ToList();
+            var needed = p.Manifest.Secrets.Where(s => s.Value.Required && s.Value.ShowIf?.Holds(p.Settings) != false && !set.Contains(p.SecretFor(s.Key)))
+                .Select(s => p.SecretFor(s.Key)).ToList();
             list.Add(new PluginInstallInfo(p, latest, needed, [.. d.Functions.Where(f => f.Plugin == p.Id).Select(f => f.Name)]));
         }
+        return list;
+    }
+
+    /// <summary>
+    /// What happened to the copy installed as <paramref name="id"/>, newest first: installed, settings changed (which),
+    /// upgraded or moved back, removed; each with the functions version, who, when and its note.
+    /// </summary>
+    public async Task<IReadOnlyList<PluginHistoryEntry>> PluginHistoryAsync(string id, CancellationToken ct = default)
+    {
+        var versions = (await store.ListAsync(200, ct)).OrderBy(v => v.Version).ToList();
+        var list = new List<PluginHistoryEntry>();
+        PluginInstall? before = null;
+        foreach (var d in versions)
+        {
+            var now = d.PluginList.FirstOrDefault(p => p.Id == id);
+            string? what = (before, now) switch
+            {
+                (null, null) => null,
+                (null, { } n) => $"Installed {n.Package} {n.Version}",
+                ({ } b, null) => $"Removed",
+                ({ } b, { } n) when b.Package != n.Package => $"Now {n.Package} {n.Version}",
+                ({ } b, { } n) when b.Version != n.Version => $"{b.Version} → {n.Version}",
+                ({ } b, { } n) when !b.SameAs(n) => "Settings changed: " + string.Join(", ",
+                    n.Settings.Keys.Union(b.Settings.Keys).Where(k => !JsonNode.DeepEquals(b.Settings.GetValueOrDefault(k), n.Settings.GetValueOrDefault(k))).Order()),
+                _ => null,
+            };
+            if (what is not null) list.Add(new PluginHistoryEntry(d.Version, what, d.Note, d.By, d.At, d.RolledBackFrom));
+            before = now;
+        }
+        list.Reverse();
         return list;
     }
 
