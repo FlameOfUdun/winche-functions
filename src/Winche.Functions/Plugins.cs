@@ -488,6 +488,9 @@ internal static class PluginEntry
     public static string Source(string? ownEntry, IReadOnlyList<(PluginInstall Install, string Import)> plugins)
     {
         var sb = new System.Text.StringBuilder();
+        // The SDK first, as the deployment names it: plugins from npm then use this copy (their peer dependency) instead of
+        // resolving one of their own, which Deno could hold back (its wait for new versions) at an older one.
+        if (plugins.Any(p => !p.Import.StartsWith("./", StringComparison.Ordinal))) sb.Append("import \"@winche-technologies/winche-functions\";\n");
         if (ownEntry is not null) sb.Append("export * from ").Append(JsonSerializer.Serialize("../" + ownEntry)).Append(";\n");
         for (var i = 0; i < plugins.Count; i++)
         {

@@ -336,6 +336,24 @@ public class PluginsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public void Plugins_from_npm_and_the_SDKs_are_exempt_from_Denos_wait_and_share_the_deployments_SDK()
+    {
+        var none = new JsonObject();
+        FunctionBundler.ExemptFromAge(none, ["npm:@winche-technologies/winche-functions", "npm:@acme/texts"]);
+        Assert.Equal("""{"minimumDependencyAge":{"age":"P1D","exclude":["npm:@winche-technologies/winche-functions","npm:@acme/texts"]}}""", none.ToJsonString());
+        var own = JsonNode.Parse("""{ "minimumDependencyAge": { "age": "P3D", "exclude": ["npm:@acme/texts"] } }""")!.AsObject();
+        FunctionBundler.ExemptFromAge(own, ["npm:@acme/texts", "npm:@acme/pay"]);
+        Assert.Equal("""{"minimumDependencyAge":{"age":"P3D","exclude":["npm:@acme/texts","npm:@acme/pay"]}}""", own.ToJsonString());
+        var length = JsonNode.Parse("""{ "minimumDependencyAge": "P2D" }""")!.AsObject();
+        FunctionBundler.ExemptFromAge(length, ["npm:@acme/pay"]);
+        Assert.Equal("""{"minimumDependencyAge":{"age":"P2D","exclude":["npm:@acme/pay"]}}""", length.ToJsonString());
+
+        var install = new PluginInstall("sms", "@acme/texts", "1.0.0", new Dictionary<string, JsonNode?>(), PluginManifest.Parse(Manifest, "t"), "console", null, DateTimeOffset.UtcNow);
+        Assert.StartsWith("import \"@winche-technologies/winche-functions\";", PluginEntry.Source(null, [(install, "npm:@acme/texts@1.0.0")]));
+        Assert.DoesNotContain("import \"@winche-technologies/winche-functions\"", PluginEntry.Source(null, [(install, "./plugins/acme__texts/index.js")]));
+    }
+
+    [Fact]
     public void Manifests_are_checked()
     {
         var bad = Assert.Throws<FunctionDeployException>(() => PluginManifest.Parse("""

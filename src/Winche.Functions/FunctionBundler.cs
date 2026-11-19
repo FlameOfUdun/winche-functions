@@ -92,11 +92,12 @@ public sealed class FunctionBundler(FunctionsOptions options)
                     else
                     {
                         imports2.Add((install, package.Specifier));
-                        // The version an admin chose is used at once; its own dependencies keep Deno's wait for new versions.
-                        if (config["minimumDependencyAge"]?["exclude"] is JsonArray exclude && !exclude.Any(x => x?.GetValueKind() == System.Text.Json.JsonValueKind.String && x.GetValue<string>() == $"npm:{install.Package}"))
-                            exclude.Add($"npm:{install.Package}");
                     }
                 }
+                // The versions an admin chose (and the SDKs they're built with) are used at once; their other dependencies keep
+                // Deno's wait for new versions (a day: against compromised releases), which Deno applies by itself otherwise.
+                if (plugins.Any(p => p.Package.Folder is null))
+                    ExemptFromAge(config, [.. FunctionsSdk.NpmPackages, .. plugins.Where(p => p.Package.Folder is null).Select(p => $"npm:{p.Install.Package}")]);
                 await File.WriteAllTextAsync(Path.Combine(dir, PluginEntry.File), PluginEntry.Source(entry, imports2), ct);
                 entry = PluginEntry.File;
             }
@@ -127,6 +128,24 @@ public sealed class FunctionBundler(FunctionsOptions options)
         {
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// Exempts <paramref name="packages"/> (npm:name) from Deno's wait for new npm versions: added to the config's
+    /// minimumDependencyAge.exclude, which is made (a day's wait, Deno's own) when the config has none.
+    /// </summary>
+    internal static void ExemptFromAge(JsonObject config, IReadOnlyList<string> packages)
+    {
+        var age = config["minimumDependencyAge"];
+        if (age is null || age.GetValueKind() != System.Text.Json.JsonValueKind.Object)
+        {
+            // None, or only a length ("P1D"): keep its length, and say what's exempt.
+            var length = age?.GetValueKind() == System.Text.Json.JsonValueKind.String ? age.GetValue<string>() : "P1D";
+            config["minimumDependencyAge"] = age = new JsonObject { ["age"] = length, ["exclude"] = new JsonArray() };
+        }
+        if (age["exclude"] is not JsonArray exclude) age["exclude"] = exclude = [];
+        foreach (var p in packages)
+            if (!exclude.Any(x => x?.GetValueKind() == System.Text.Json.JsonValueKind.String && x.GetValue<string>() == p)) exclude.Add(p);
     }
 
     /// <summary>A package's entry points from its package.json exports: subpath ("" or "/testing") → file, relative to it.</summary>
