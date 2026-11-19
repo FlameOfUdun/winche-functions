@@ -101,6 +101,12 @@ public sealed record FunctionLogLine(string Level, string Message, DateTimeOffse
 /// <summary>Who's calling: for callables, the caller's claims.</summary>
 public sealed record FunctionCaller(string? Uid, IReadOnlyDictionary<string, object?>? Token)
 {
+    /// <summary>An app's request (a callable called by an app, an HTTP function's request): never the server's own call.</summary>
+    public bool FromApp { get; init; }
+
+    /// <summary>The server's own call (another function, the console, a server with the admin SDK), not an app's nor a user's.</summary>
+    public bool IsServer => !FromApp && Uid is null;
+
     public static readonly FunctionCaller Server = new(null, null);
 }
 

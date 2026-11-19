@@ -458,6 +458,7 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
         var context = new JsonObject
         {
             ["functionName"] = name,
+            ["server"] = caller.IsServer,
             ["auth"] = caller.Uid is null ? null : new JsonObject { ["uid"] = caller.Uid, ["token"] = JsonSerializer.SerializeToNode(caller.Token ?? new Dictionary<string, object?>()) },
             ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };

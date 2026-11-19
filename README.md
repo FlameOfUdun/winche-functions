@@ -99,6 +99,9 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
   is the same on retries.
 - **Schedules** are cron expressions (minute hour day month weekday), UTC unless `timeZone` is given; one server
   starts each run. Runs missed while every server was down happen once when one is back.
+- **Who called:** `ctx.caller` is the signed-in user (null when signed out); `ctx.byServer` is true only when the
+  server itself called: another function (`functions.call`), a run from the console, a server with the admin SDK, a
+  trigger or schedule. Never for apps or HTTP requests: a callable only the project's own code may use checks it.
 - **Callables** answer the app directly: `{ data }`, or `{ error: { code, message } }` with an HTTP status. An
   `HttpsError`'s message reaches the app; other failures show as "The function failed." (details in the logs).
 - **Run time**: a function past its time is stopped. Its time is, in order: its own in the console (**Functions →
@@ -561,7 +564,7 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
 
 ## Upgrading to 3.1
 
-- New: plugins (above), with `plugin()` from @winche-technologies/winche-functions 3.1. Deployments keep their plugins
+- New: plugins (above), with `plugin()` from @winche-technologies/winche-functions 3.1; `ctx.byServer` (who called). Deployments keep their plugins
   (a new column, added by itself). Nothing changes for code without them.
 
 ## Upgrading to 3.0

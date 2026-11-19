@@ -89,6 +89,7 @@ const context = (c, run) => ({
   call: callFor(run),
   functionName: c.functionName,
   auth: c.auth ?? null,
+  server: c.server === true,
   log: (...a) => console.log(...a),
 });
 const stateOf = (c, run) => ({

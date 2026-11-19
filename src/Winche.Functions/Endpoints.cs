@@ -49,7 +49,7 @@ public static class FunctionsEndpoints
             // The request's caller (Winche.Core), or this package's own Claims mapping when it has one.
             var claims = await http.WincheCallerOf(options.Claims);
             var uid = WincheCaller.UidOf(claims);
-            var result = await functions.InvokeAsync(name, data, new FunctionCaller(uid, claims), ct, kind: "callable");
+            var result = await functions.InvokeAsync(name, data, new FunctionCaller(uid, claims) { FromApp = true }, ct, kind: "callable");
             if (result.Ok) return Results.Json(new { data = result.Result });
             return Send(ErrorOf(result));
         });
@@ -102,7 +102,7 @@ public static class FunctionsEndpoints
             ["body"] = body.Length == 0 ? null : Convert.ToBase64String(body.GetBuffer(), 0, (int)body.Length),
             ["ip"] = http.Connection.RemoteIpAddress?.ToString(),
         };
-        var result = await functions.InvokeAsync(name, request, FunctionCaller.Server, ct, kind: "http");
+        var result = await functions.InvokeAsync(name, request, FunctionCaller.Server with { FromApp = true }, ct, kind: "http");
         if (!result.Ok) { await Send(ErrorOf(result)).ExecuteAsync(http); return; }
         var answer = result.Result as JsonObject ?? [];
         http.Response.StatusCode = answer["status"]?.GetValue<int>() ?? 200;

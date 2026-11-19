@@ -199,6 +199,31 @@ public class PluginsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Callables_know_whether_the_server_or_an_app_called()
+    {
+        await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
+        var functions = app.Service<WincheFunctions>();
+        await functions.DeployAsync(new Dictionary<string, string> { ["index.ts"] = """
+            import { callable, http } from "@winche-technologies/winche-functions";
+            import * as admin from "@winche-technologies/winche-admin";
+            export const who = callable(async (_d, ctx) => ({ server: ctx.byServer, uid: ctx.caller?.uid ?? null }));
+            export const relay = callable(async () => admin.functions.call("who", null));
+            export const hook = http.onRequest(async (_r, ctx) => ({ server: ctx.byServer }));
+            """ }, null, null);
+        Assert.Equal("""{"server":true,"uid":null}""", (await functions.InvokeAsync("who", null, FunctionCaller.Server)).Result!.ToJsonString());
+        Assert.Equal("""{"server":true,"uid":null}""", (await functions.InvokeAsync("relay", null, FunctionCaller.Server with { FromApp = true })).Result!.ToJsonString());
+        async Task<string> App(string? uid)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{app.Url}/functions/v1/call/who") { Content = System.Net.Http.Json.JsonContent.Create(new { data = (object?)null }) };
+            if (uid is not null) request.Headers.Add("X-Test-Uid", uid);
+            return JsonNode.Parse(await (await app.Http.SendAsync(request)).Content.ReadAsStringAsync())!["data"]!.ToJsonString();
+        }
+        Assert.Equal("""{"server":false,"uid":null}""", await App(null));   // signed out: not the server
+        Assert.Equal("""{"server":false,"uid":"ann"}""", await App("ann"));
+        Assert.Contains("\"server\":false", await (await app.Http.PostAsync($"{app.Url}/functions/v1/http/hook", new StringContent(""))).Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public void Manifests_are_checked()
     {
         var bad = Assert.Throws<FunctionDeployException>(() => PluginManifest.Parse("""
