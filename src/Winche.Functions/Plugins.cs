@@ -403,6 +403,9 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
                     var p = o["package"] as JsonObject ?? [];
                     var name = p["name"]?.GetValue<string>();
                     if (name is null || list.Any(x => x.Package == name)) continue;
+                    // npm's keyword filter can return every package with the keyword whatever the words (new packages
+                    // aren't indexed for text yet): each word must be in its name, description or keywords.
+                    if (!Matches(q, name, p["description"]?.GetValue<string>(), (p["keywords"] as JsonArray)?.Select(k => k?.GetValue<string>()))) continue;
                     list.Add(new PluginSearchResult(name, p["version"]?.GetValue<string>() ?? "", p["description"]?.GetValue<string>(),
                         p["publisher"]?["username"]?.GetValue<string>(), p["date"] is JsonValue d && DateTimeOffset.TryParse(d.GetValue<string>(), out var at) ? at : null, false,
                         o["downloads"]?["monthly"] is JsonValue dl && dl.TryGetValue<long>(out var monthly) ? monthly : null,
@@ -414,6 +417,13 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
         if (q.Length > 0) return list;
         // Nothing typed: the most used first (the server's own folders, which npm doesn't count, after npm's).
         return [.. list.OrderBy(r => r.Provided).ThenByDescending(r => r.Downloads ?? -1).ThenByDescending(r => r.Popularity ?? -1)];
+    }
+
+    /// <summary>Whether every word of <paramref name="q"/> is in the name, the description or a keyword (no words: yes).</summary>
+    internal static bool Matches(string q, string name, string? description, IEnumerable<string?>? keywords)
+    {
+        var text = $"{name} {description} {string.Join(' ', keywords ?? [])}";
+        return q.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(w => text.Contains(w, StringComparison.OrdinalIgnoreCase));
     }
 
     private static (int, int, int, string) SortKey(string v)

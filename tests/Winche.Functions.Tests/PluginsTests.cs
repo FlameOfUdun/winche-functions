@@ -305,6 +305,11 @@ public class PluginsTests(PostgresFixture pg)
         Assert.Equal(("acme", 120L), (found[1].Publisher, found[1].Downloads));
         Assert.Equal("popularity=1.0", npm.LastQuery?.Split('&').FirstOrDefault(x => x.StartsWith("popularity")));
         Assert.Equal(["text-plugin"], (await packages.SearchAsync("text")).Where(f => f.Provided).Select(f => f.Package));
+        // npm answers every package with the keyword whatever the words: only those the words are in are kept.
+        Assert.Equal(["@acme/payments"], (await packages.SearchAsync("payments")).Where(f => !f.Provided).Select(f => f.Package));
+        Assert.Empty((await packages.SearchAsync("zzzz")).Where(f => !f.Provided));
+        Assert.True(PluginPackages.Matches("sms twilio", "@acme/x", "Texts.", ["twilio", "SMS"]));
+        Assert.False(PluginPackages.Matches("sms stripe", "@acme/x", "Texts.", ["twilio", "sms"]));
 
         // From npm: the README and package.json come out of the package file too.
         var tgz = Tarball(("package/package.json", """{ "name": "@acme/payments", "version": "2.1.0", "homepage": "https://acme.test" }"""), ("package/winche-plugin.json", Manifest), ("package/readme.md", "Hello"));
