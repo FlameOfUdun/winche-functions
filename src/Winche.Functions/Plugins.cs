@@ -293,7 +293,10 @@ public sealed record PluginAbout
 public sealed record PluginVersion(string Version, DateTimeOffset? At);
 
 /// <summary>A plugin package a search found.</summary>
-public sealed record PluginSearchResult(string Package, string Version, string? Description, string? Publisher, DateTimeOffset? At, bool Provided);
+/// <param name="Downloads">npm's downloads in the last month, when it says.</param>
+/// <param name="Popularity">npm's popularity score (0 to 1), when it says.</param>
+public sealed record PluginSearchResult(string Package, string Version, string? Description, string? Publisher, DateTimeOffset? At, bool Provided,
+    long? Downloads = null, double? Popularity = null);
 
 /// <summary>The HTTP client plugin packages are looked up with (tests give their own handler).</summary>
 public sealed class PluginRegistryHttp(HttpClient http)
@@ -376,7 +379,8 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
 
     /// <summary>
     /// Plugin packages matching <paramref name="text"/>: this server's folders, and npm packages with the keyword
-    /// winche-plugin (a registry without search: the folders only).
+    /// winche-plugin (a registry without search: the folders only). Without text, npm's most popular first (downloads,
+    /// then npm's popularity score); with text, npm's best matches first.
     /// </summary>
     public async Task<IReadOnlyList<PluginSearchResult>> SearchAsync(string? text, CancellationToken ct = default)
     {
@@ -390,7 +394,8 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
             }).ToList();
         try
         {
-            var url = $"{options.PluginRegistry.TrimEnd('/')}/-/v1/search?size=20&text={Uri.EscapeDataString(("keywords:winche-plugin " + q).Trim())}";
+            var url = $"{options.PluginRegistry.TrimEnd('/')}/-/v1/search?size={(q.Length == 0 ? 50 : 20)}&text={Uri.EscapeDataString(("keywords:winche-plugin " + q).Trim())}"
+                + (q.Length == 0 ? "&popularity=1.0&quality=0.0&maintenance=0.0" : "");
             using var r = await http.Client.GetAsync(url, ct);
             if (r.IsSuccessStatusCode && JsonNode.Parse(await r.Content.ReadAsStringAsync(ct))?["objects"] is JsonArray found)
                 foreach (var o in found.OfType<JsonObject>())
@@ -399,12 +404,16 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
                     var name = p["name"]?.GetValue<string>();
                     if (name is null || list.Any(x => x.Package == name)) continue;
                     list.Add(new PluginSearchResult(name, p["version"]?.GetValue<string>() ?? "", p["description"]?.GetValue<string>(),
-                        p["publisher"]?["username"]?.GetValue<string>(), p["date"] is JsonValue d && DateTimeOffset.TryParse(d.GetValue<string>(), out var at) ? at : null, false));
+                        p["publisher"]?["username"]?.GetValue<string>(), p["date"] is JsonValue d && DateTimeOffset.TryParse(d.GetValue<string>(), out var at) ? at : null, false,
+                        o["downloads"]?["monthly"] is JsonValue dl && dl.TryGetValue<long>(out var monthly) ? monthly : null,
+                        o["score"]?["detail"]?["popularity"] is JsonValue pop && pop.TryGetValue<double>(out var popularity) ? popularity : null));
                 }
         }
         catch (HttpRequestException) { }
         catch (JsonException) { }
-        return list;
+        if (q.Length > 0) return list;
+        // Nothing typed: the most used first (the server's own folders, which npm doesn't count, after npm's).
+        return [.. list.OrderBy(r => r.Provided).ThenByDescending(r => r.Downloads ?? -1).ThenByDescending(r => r.Popularity ?? -1)];
     }
 
     private static (int, int, int, string) SortKey(string v)

@@ -287,7 +287,13 @@ public class PluginsTests(PostgresFixture pg)
         options.ProvidedPlugins["text-plugin@1.2.0"] = v2;
         var npm = new FakeRegistry
         {
-            ["/-/v1/search"] = Json("""{ "objects": [{ "package": { "name": "@acme/payments", "version": "2.1.0", "description": "Payments.", "publisher": { "username": "acme" }, "date": "2026-11-01T00:00:00Z" } }] }"""),
+            ["/-/v1/search"] = Json("""
+                { "objects": [
+                  { "package": { "name": "@acme/payments", "version": "2.1.0", "description": "Payments.", "publisher": { "username": "acme" }, "date": "2026-11-01T00:00:00Z" },
+                    "downloads": { "monthly": 120, "weekly": 30 }, "score": { "detail": { "popularity": 0.2 } } },
+                  { "package": { "name": "@acme/texts", "version": "1.0.0" }, "downloads": { "monthly": 5400 }, "score": { "detail": { "popularity": 0.9 } } }
+                ] }
+                """),
         };
         var packages = new PluginPackages(options, new PluginRegistryHttp(new HttpClient(npm)));
         var about = (await packages.GetAsync("text-plugin", null)).About;
@@ -295,8 +301,9 @@ public class PluginsTests(PostgresFixture pg)
         Assert.StartsWith("# Text messages", about.Readme);
         Assert.Equal(["1.2.0", "1.0.0"], (await packages.VersionsAsync("text-plugin")).Select(v => v.Version));
         var found = await packages.SearchAsync("");
-        Assert.Equal([("text-plugin", true), ("@acme/payments", false)], found.Select(f => (f.Package, f.Provided)));
-        Assert.Equal("acme", found[1].Publisher);
+        Assert.Equal([("@acme/texts", false), ("@acme/payments", false), ("text-plugin", true)], found.Select(f => (f.Package, f.Provided)));   // most downloaded first
+        Assert.Equal(("acme", 120L), (found[1].Publisher, found[1].Downloads));
+        Assert.Equal("popularity=1.0", npm.LastQuery?.Split('&').FirstOrDefault(x => x.StartsWith("popularity")));
         Assert.Equal(["text-plugin"], (await packages.SearchAsync("text")).Where(f => f.Provided).Select(f => f.Package));
 
         // From npm: the README and package.json come out of the package file too.
@@ -357,10 +364,11 @@ public class PluginsTests(PostgresFixture pg)
     private sealed class FakeRegistry : HttpMessageHandler, System.Collections.IEnumerable
     {
         private readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
+        public string? LastQuery { get; private set; }
         public byte[] this[string path] { set => _files[path] = value; }
         public System.Collections.IEnumerator GetEnumerator() => _files.GetEnumerator();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
-            Task.FromResult(_files.TryGetValue(request.RequestUri!.AbsolutePath, out var b)
+            Task.FromResult((LastQuery = request.RequestUri!.Query.TrimStart('?')) is var _ && _files.TryGetValue(request.RequestUri!.AbsolutePath, out var b)
                 ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(b) }
                 : new HttpResponseMessage(HttpStatusCode.NotFound));
     }
