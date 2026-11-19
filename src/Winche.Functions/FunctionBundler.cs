@@ -11,11 +11,11 @@ public sealed class FunctionBundler(FunctionsOptions options)
     private static readonly Regex Ansi = new(@"\x1b\[[0-9;]*m");
 
     /// <summary>What's wrong with the files themselves (names, entry point).</summary>
-    public static IReadOnlyList<string> Problems(IReadOnlyDictionary<string, string> files)
+    public static IReadOnlyList<string> Problems(IReadOnlyDictionary<string, string> files, bool plugins = false)
     {
         var problems = new List<string>();
-        if (files.Count == 0) problems.Add("There are no files.");
-        if (!files.Keys.Any(f => Entries.Contains(f))) problems.Add($"Add an entry file: {string.Join(", ", Entries)}.");
+        if (files.Count == 0 && !plugins) problems.Add("There are no files.");
+        if (files.Count > 0 && !files.Keys.Any(f => Entries.Contains(f))) problems.Add($"Add an entry file: {string.Join(", ", Entries)}.");
         foreach (var f in files.Keys)
             if (f.Length > 200 || f.StartsWith('/') || f.Contains('\\') || f.Split('/').Any(p => p is "" or "." or ".." ) || f.StartsWith(".winche/", StringComparison.Ordinal))
                 problems.Add($"'{f}' isn't a usable file name (relative, with / between folders).");
@@ -41,9 +41,15 @@ public sealed class FunctionBundler(FunctionsOptions options)
     private static JsonObject ImportsOf(IReadOnlyDictionary<string, string> files) =>
         (files.TryGetValue("deno.json", out var json) ? JsonNode.Parse(json, documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject : null)?["imports"] as JsonObject ?? [];
 
-    public async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct)
+    public Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, CancellationToken ct) => BundleAsync(files, [], ct);
+
+    /// <summary>
+    /// Bundles the files with <paramref name="plugins"/>' installed copies (each its package's code: from npm, or a folder
+    /// the server provides), all put together by a generated entry (<see cref="PluginEntry"/>).
+    /// </summary>
+    public async Task<string> BundleAsync(IReadOnlyDictionary<string, string> files, IReadOnlyList<(PluginInstall Install, PluginPackage Package)> plugins, CancellationToken ct)
     {
-        if (Problems(files) is { Count: > 0 } problems) throw new FunctionDeployException("These files can't be deployed.", problems);
+        if (Problems(files, plugins.Count > 0) is { Count: > 0 } problems) throw new FunctionDeployException("These files can't be deployed.", problems);
         var dir = Path.Combine(DenoRuntime.WorkFolder("builds"), Guid.NewGuid().ToString("N"));
         try
         {
@@ -65,11 +71,36 @@ public sealed class FunctionBundler(FunctionsOptions options)
                 foreach (var (subpath, file) in Exports(folder))
                     if (!imports.ContainsKey(name + subpath)) imports[name + subpath] = $"./.winche/packages/{name}/{file}";
             }
+            var entry = Entries.FirstOrDefault(files.ContainsKey);
+            if (plugins.Count > 0)
+            {
+                var imports2 = new List<(PluginInstall, string)>();
+                foreach (var (install, package) in plugins)
+                {
+                    if (package.Folder is { } local)
+                    {
+                        var safe = install.Package.Replace("@", "").Replace("/", "__");
+                        var target = Path.Combine(dir, ".winche", "plugins", safe);
+                        if (!Directory.Exists(target)) CopyFolder(local, target);
+                        var main = Exports(local).FirstOrDefault(e => e.Subpath == "").File
+                            ?? throw new FunctionDeployException($"{install.Package} has no entry in its package.json (exports or main).", []);
+                        imports2.Add((install, $"./plugins/{safe}/{main}"));
+                    }
+                    else
+                    {
+                        imports2.Add((install, package.Specifier));
+                        // The version an admin chose is used at once; its own dependencies keep Deno's wait for new versions.
+                        if (config["minimumDependencyAge"]?["exclude"] is JsonArray exclude && !exclude.Any(x => x?.GetValueKind() == System.Text.Json.JsonValueKind.String && x.GetValue<string>() == $"npm:{install.Package}"))
+                            exclude.Add($"npm:{install.Package}");
+                    }
+                }
+                await File.WriteAllTextAsync(Path.Combine(dir, PluginEntry.File), PluginEntry.Source(entry, imports2), ct);
+                entry = PluginEntry.File;
+            }
             await File.WriteAllTextAsync(Path.Combine(dir, "deno.json"), config.ToJsonString(), ct);
 
-            var entry = Entries.First(files.ContainsKey);
             var info = new ProcessStartInfo(DenoRuntime.Locate(options)) { WorkingDirectory = dir, RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
-            foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
+            foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry!, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             using var process = System.Diagnostics.Process.Start(info)!;

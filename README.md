@@ -457,6 +457,74 @@ document.querySelector("#close").onclick = async () => {
   rolled back with the functions.
 - The emulators have no console.
 
+## Plugins
+
+A plugin is a package of functions a project installs instead of writing them: an integration with another service,
+say, set up with a few settings and its API key. It's an npm package with a `winche-plugin.json` and a default export
+made with `plugin()`; each project installs copies of it under ids of its own, from the console (**Functions →
+Plugins**), the CLI (`winche plugins:install`) or `winche.json`.
+
+```ts
+// The plugin package's index.ts
+import { callable, onDocument, plugin, HttpsError } from "@winche-technologies/winche-functions";
+import { documents } from "@winche-technologies/winche-admin";
+
+export default plugin((p) => {
+  const token = p.secret("AUTH_TOKEN");                     // this copy's own secret
+  const send = async (to: string, body: string) => { /* fetch the service's API with token.value(), p.setting("FROM") */ };
+  return {
+    // Apps call it as functions.call("sms.send", …) for the copy installed as "sms".
+    send: callable(async (d: { to: string; body: string }, ctx) => {
+      if (!ctx.caller) throw new HttpsError("unauthenticated", "Sign in first.");
+      return { id: await send(d.to, d.body) };
+    }, { secrets: [token] }),
+    // Or queued: a document in the collection the installer chose; sent when the device is back online.
+    queued: onDocument.created(`${p.setting("QUEUE")}/{id}`, async (e) => {
+      await documents.doc(e.path).update({ sent: await send(e.data.get("to"), e.data.get("body")) });
+    }, { secrets: [token] }),
+  };
+});
+```
+
+```json
+// winche-plugin.json, beside its package.json
+{
+  "title": "Text messages",
+  "description": "Sends texts from a callable or a queue collection.",
+  "icon": "message",
+  "settings": {
+    "FROM": { "label": "From number", "type": "string", "required": true },
+    "QUEUE": { "label": "Queue collection", "type": "string", "default": "sms" }
+  },
+  "secrets": { "AUTH_TOKEN": { "label": "Auth token" } },
+  "access": ["Updates the documents of the queue collection.", "Calls the text message service's API."]
+}
+```
+
+- **Installing** a copy under an id (lowercase letters, digits and `-`, e.g. `sms`) is a new functions version: its
+  functions run beside the project's own as `<id>.<name>` (`sms.send`), with the same instances, logs and limits.
+  Two copies of a package (other ids, other settings) are two sets of functions.
+- **Settings** are `string`, `number`, `integer`, `boolean` or `select` (one of `options`), with `label`,
+  `description`, `required` and `default`. They're checked when installing; the code reads them with
+  `p.setting(name)` (or `p.settings`) when `plugin()` makes the copy, so trigger paths can come from them.
+- **Secrets:** each copy has its own, `<ID>__<NAME>` among the project's (`SMS__AUTH_TOKEN`): set like any other
+  (console, `winche functions secrets:set`), values or references. A plugin reads only the ones its manifest lists:
+  a deployment where it lists another (`secrets.define("MAIL_KEY")`) is refused.
+- **Versions:** a copy stays on its exact version. The console shows when a newer one is out, and what it changes;
+  upgrading keeps the settings it still has and asks for new required ones. Every change (install, settings, upgrade,
+  removal) is in the version list, and rolling back brings back that version's plugins with its code.
+- **Removing** one takes its functions out; what it wrote stays. Its secrets go too when asked.
+- **From winche.json:** `"plugins": { "sms": { "package": "…", "version": "1.2.0", "settings": { … } } }` makes a
+  `functions deploy` install exactly these (the emulators too). Without `"plugins"`, a deploy keeps what's installed.
+- **Where they come from:** npm (`FunctionsOptions.PluginRegistry`), each package checked against npm's integrity hash
+  and its manifest read before anything runs; or folders the server provides (`FunctionsOptions.ProvidedPlugins`, for
+  servers without npm, and tests). The chosen version is exempt from Deno's wait for new releases; its own dependencies
+  aren't.
+- **Rights:** a plugin's functions act with the server's rights, as the project's own do: install only packages you
+  trust. The manifest's `access` is what it says it does, shown before installing; it isn't enforced.
+- Plugins can't add console pages. `WincheFunctions.InstallPluginAsync`, `ConfigurePluginAsync`, `UpgradePluginAsync`,
+  `UninstallPluginAsync` and `PluginsAsync` are the API.
+
 ## Before-functions
 
 They run **before** a write is saved, inside it, and can refuse it or change it:
@@ -490,6 +558,11 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
+
+## Upgrading to 3.1
+
+- New: plugins (above), with `plugin()` from @winche-technologies/winche-functions 3.1. Deployments keep their plugins
+  (a new column, added by itself). Nothing changes for code without them.
 
 ## Upgrading to 3.0
 

@@ -39,6 +39,9 @@ public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int Time
     /// <summary>What its code says about its instances (memory, how many); the settings can say otherwise.</summary>
     public FunctionLimits Limits { get; init; } = new();
 
+    /// <summary>The plugin copy it belongs to (its id), or null for the project's own code.</summary>
+    public string? Plugin { get; init; }
+
     /// <summary>The input to start from when running it by hand: its example, else one made from its input schema.</summary>
     public JsonNode? ExampleInput => Example?.DeepClone() ?? (Input is JsonObject schema ? SchemaExample.Of(schema) : null);
 }
@@ -63,10 +66,15 @@ public sealed record ConsolePageInfo(string Title, string Files, string? Icon, i
 
 /// <summary>A deployed version: its source files, the bundle that runs, and the functions found in it.</summary>
 /// <param name="Resources">The files of its resources folder (ctx.resources), by path: each one's content hash and size.</param>
+/// <param name="Plugins">The plugins installed in it (their functions are among <paramref name="Functions"/>, named id.name).</param>
 public sealed record Deployment(int Version, IReadOnlyDictionary<string, string> Files, string Bundle, IReadOnlyList<FunctionInfo> Functions,
-    string? Note, string? By, DateTimeOffset At, int? RolledBackFrom, IReadOnlyDictionary<string, ResourceEntry>? Resources = null)
+    string? Note, string? By, DateTimeOffset At, int? RolledBackFrom, IReadOnlyDictionary<string, ResourceEntry>? Resources = null,
+    IReadOnlyList<PluginInstall>? Plugins = null)
 {
     public IReadOnlyDictionary<string, ResourceEntry> ResourceFiles => Resources ?? new Dictionary<string, ResourceEntry>();
+
+    /// <summary>Its plugins (none when null).</summary>
+    public IReadOnlyList<PluginInstall> PluginList => Plugins ?? [];
 }
 
 /// <summary>An resource of a deployment: its content's SHA-256 (lowercase hex) and its size in bytes.</summary>

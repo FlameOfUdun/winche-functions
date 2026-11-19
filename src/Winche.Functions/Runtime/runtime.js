@@ -120,12 +120,18 @@ self.onmessage = async (m) => {
     if (d.context) d.context.resources = d.resources;
     if (d.t === "analyze") {
       const list = [];
-      for (const [name, v] of Object.entries(mod))
+      for (const [name, v] of Object.entries(mod)) {
         if (v && typeof v.__winche === "number") list.push({ name, protocol: v.__winche, trigger: v.trigger, options: v.options ?? {} });
+        // A plugin's installed copy (export "plugin:<id>", made by the server): its functions are "<id>.<name>".
+        else if (name.startsWith("plugin:") && v && v.__wincheGroup === 1)
+          for (const [fn, f] of Object.entries(v.functions ?? {}))
+            if (f && typeof f.__winche === "number") list.push({ name: name.slice(7) + "." + fn, plugin: name.slice(7), protocol: f.__winche, trigger: f.trigger, options: f.options ?? {} });
+      }
       done({ result: list });
       return;
     }
-    const fn = mod[d.name];
+    const dot = d.name.indexOf(".");
+    const fn = dot < 0 ? mod[d.name] : mod["plugin:" + d.name.slice(0, dot)]?.functions?.[d.name.slice(dot + 1)];
     if (!fn || typeof fn.__winche !== "number") throw Object.assign(new Error("There's no function " + d.name + " in this deployment."), { code: "not-found" });
     if (fn.trigger.kind === "http") {
       // A standard Request in, a standard Response (or text, or JSON) out.

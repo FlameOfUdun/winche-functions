@@ -18,6 +18,15 @@ public sealed class FunctionsOptions
     /// </summary>
     public Dictionary<string, string> ProvidedPackages { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Plugin packages this server provides from folders (package name → a folder with its package.json,
+    /// winche-plugin.json and built files), over npm: for servers that can't reach npm, and tests.
+    /// </summary>
+    public Dictionary<string, string> ProvidedPlugins { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The npm registry plugin packages come from (default https://registry.npmjs.org/).</summary>
+    public string PluginRegistry { get; set; } = "https://registry.npmjs.org/";
+
     /// <summary>How many functions may run at once on this server (default 16); more wait their turn.</summary>
     public int MaxConcurrency { get; set; } = 16;
 

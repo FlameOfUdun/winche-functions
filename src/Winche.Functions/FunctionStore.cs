@@ -53,6 +53,10 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
               seen_at timestamptz NOT NULL
             );
         """,
+        // Plugins installed in each deployment.
+        """
+            ALTER TABLE winche_function_deployments ADD COLUMN IF NOT EXISTS plugins jsonb NOT NULL DEFAULT '[]'::jsonb;
+        """,
     ];
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -109,7 +113,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     public async Task<Deployment?> GetAsync(int version, CancellationToken ct = default)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("SELECT version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources FROM winche_function_deployments WHERE version = $1");
+        await using var cmd = db.CreateCommand("SELECT version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources, plugins FROM winche_function_deployments WHERE version = $1");
         cmd.Parameters.AddWithValue(version);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? Read(r, withCode: true) : null;
@@ -119,7 +123,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     public async Task<IReadOnlyList<Deployment>> ListAsync(int limit = 50, CancellationToken ct = default)
     {
         await InitializeAsync(ct);
-        await using var cmd = db.CreateCommand("SELECT version, '{}'::jsonb, '', functions, note, deployed_by, deployed_at, rolled_back_from, resources FROM winche_function_deployments ORDER BY version DESC LIMIT $1");
+        await using var cmd = db.CreateCommand("SELECT version, '{}'::jsonb, '', functions, note, deployed_by, deployed_at, rolled_back_from, resources, plugins FROM winche_function_deployments ORDER BY version DESC LIMIT $1");
         cmd.Parameters.AddWithValue(limit);
         var list = new List<Deployment>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -128,13 +132,13 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
     }
 
     internal async Task<Deployment> AddAsync(IReadOnlyDictionary<string, string> files, string bundle, IReadOnlyList<FunctionInfo> functions, string? note, string? by, int? from,
-        IReadOnlyDictionary<string, ResourceEntry> resources, CancellationToken ct)
+        IReadOnlyDictionary<string, ResourceEntry> resources, IReadOnlyList<PluginInstall> plugins, CancellationToken ct)
     {
         await InitializeAsync(ct);
         await using var cmd = db.CreateCommand("""
-            INSERT INTO winche_function_deployments (version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources)
-            SELECT coalesce(max(version), 0) + 1, $1, $2, $3, $4, $5, now(), $6, $7 FROM winche_function_deployments
-            RETURNING version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources
+            INSERT INTO winche_function_deployments (version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources, plugins)
+            SELECT coalesce(max(version), 0) + 1, $1, $2, $3, $4, $5, now(), $6, $7, $8 FROM winche_function_deployments
+            RETURNING version, files, bundle, functions, note, deployed_by, deployed_at, rolled_back_from, resources, plugins
             """);
         cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(files, Json));
         cmd.Parameters.AddWithValue(bundle);
@@ -143,6 +147,7 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         cmd.Parameters.AddWithValue((object?)by ?? DBNull.Value);
         cmd.Parameters.AddWithValue((object?)from ?? DBNull.Value);
         cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(resources, Json));
+        cmd.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(plugins, Json));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         await r.ReadAsync(ct);
         return Read(r, withCode: true);
@@ -154,7 +159,8 @@ public sealed class FunctionStore([FromKeyedServices(FunctionStore.DataSourceKey
         r.GetString(2),
         JsonSerializer.Deserialize<List<FunctionInfo>>(r.GetString(3), Json)!,
         r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.GetFieldValue<DateTimeOffset>(6), r.IsDBNull(7) ? null : r.GetInt32(7),
-        JsonSerializer.Deserialize<Dictionary<string, ResourceEntry>>(r.GetString(8), Json)!);
+        JsonSerializer.Deserialize<Dictionary<string, ResourceEntry>>(r.GetString(8), Json)!,
+        JsonSerializer.Deserialize<List<PluginInstall>>(r.GetString(9), Json)!);
 
     // ── resources ────────────────────────────────────────────────────────────────
 

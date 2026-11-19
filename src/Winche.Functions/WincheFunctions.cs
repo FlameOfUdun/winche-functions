@@ -13,7 +13,7 @@ namespace Winche.Functions;
 /// Functions: deploy (bundle, find the exported functions, check their triggers, keep the version), roll back, and run
 /// them. Every server follows the newest deployment within seconds.
 /// </summary>
-public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler, DenoRuntime runtime, FunctionsOptions options,
+public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler bundler, DenoRuntime runtime, FunctionsOptions options,
     IServiceProvider services, ILoggerFactory loggers, FunctionSecrets secrets)
 {
     public const string LogCategory = "Winche.Functions";
@@ -201,12 +201,21 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
 
     /// <summary>
     /// Bundles and checks <paramref name="files"/>, then makes them the deployment in force, with <paramref name="resources"/>
-    /// (stored beforehand with <see cref="PutResourceAsync"/>) as its resources.
+    /// (stored beforehand with <see cref="PutResourceAsync"/>) as its resources, and <c>plugins</c> as its plugins (null keeps
+    /// the ones of the deployment in force).
     /// </summary>
     public async Task<Deployment> DeployAsync(IReadOnlyDictionary<string, string> files, string? note, string? by, CancellationToken ct = default, int? rolledBackFrom = null,
-        IReadOnlyDictionary<string, ResourceEntry>? resources = null)
+        IReadOnlyDictionary<string, ResourceEntry>? resources = null, IReadOnlyList<PluginInstall>? plugins = null)
     {
         resources ??= new Dictionary<string, ResourceEntry>();
+        if (plugins is null)
+        {
+            if (_current is null) await RefreshAsync(ct);
+            plugins = _current?.PluginList ?? [];
+        }
+        if (PluginListProblems(plugins) is { Count: > 0 } badPlugins) throw new FunctionDeployException("These plugins can't be installed.", badPlugins);
+        var packages = new List<(PluginInstall, PluginPackage)>();
+        foreach (var p in plugins) packages.Add((p, await services.GetRequiredService<PluginPackages>().GetAsync(p.Package, p.Version, ct)));
         if (ResourceProblems(resources) is { Count: > 0 } bad) throw new FunctionDeployException("These resources can't be deployed.", bad);
         if (await store.MissingResourcesAsync([.. resources.Values.Select(a => a.Hash)], ct) is { Count: > 0 } missing)
             throw new FunctionDeployException("Some resources haven't been sent.", [.. resources.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"resources/{a.Key}").Take(20)]);
@@ -214,14 +223,14 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             throw new FunctionDeployException("This code uses the functions API from before @winche-technologies/winche-admin.", old);
         if (bundler.MissingPackages(files) is { Count: > 0 } unnamed)
             throw new FunctionDeployException("The code imports packages its deno.json doesn't name.", unnamed);
-        var bundle = await bundler.BundleAsync(files, ct);
+        var bundle = await bundler.BundleAsync(files, packages, ct);
         var check = $"check-{Guid.NewGuid():N}";
         JsonArray found;
         try { found = await runtime.AnalyzeAsync(check, bundle, ct); }
         finally { await runtime.ForgetAsync(check, CancellationToken.None); }
-        var functions = Read(found, files, out var problems);
+        var functions = Read(found, files, plugins, out var problems);
         if (problems.Count > 0) throw new FunctionDeployException("These functions can't be deployed.", problems);
-        var deployment = await store.AddAsync(files, bundle, functions, note, by, rolledBackFrom, resources, ct);
+        var deployment = await store.AddAsync(files, bundle, functions, note, by, rolledBackFrom, resources, plugins, ct);
         _log.LogInformation("Functions version {Version} deployed by {By}: {Functions}.", deployment.Version, by ?? "someone",
             functions.Count == 0 ? "no functions" : string.Join(", ", functions.Select(f => f.Name)));
         await RefreshAsync(ct);
@@ -232,10 +241,10 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
     public async Task<Deployment> RollBackAsync(int version, string? note, string? by, CancellationToken ct = default)
     {
         var old = await store.GetAsync(version, ct) ?? throw new FunctionDeployException($"There's no version {version}.", []);
-        return await DeployAsync(old.Files, note ?? $"Back to version {version}", by, ct, version, old.ResourceFiles);
+        return await DeployAsync(old.Files, note ?? $"Back to version {version}", by, ct, version, old.ResourceFiles, old.PluginList);
     }
 
-    private IReadOnlyList<FunctionInfo> Read(JsonArray found, IReadOnlyDictionary<string, string> files, out List<string> problems)
+    private IReadOnlyList<FunctionInfo> Read(JsonArray found, IReadOnlyDictionary<string, string> files, IReadOnlyList<PluginInstall> plugins, out List<string> problems)
     {
         problems = [];
         var list = new List<FunctionInfo>();
@@ -244,6 +253,9 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
         foreach (var node in found.OfType<JsonObject>())
         {
             var name = node["name"]!.GetValue<string>();
+            var plugin = node["plugin"]?.GetValue<string>();
+            var install = plugin is null ? null : plugins.FirstOrDefault(p => p.Id == plugin);
+            if (plugin is not null && install is null) continue;   // not one the server installed
             if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol)
             {
                 problems.Add($"{name}: written with an @winche-technologies/winche-functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche-technologies/winche-functions {FunctionsSdk.Major}.x).");
@@ -256,7 +268,9 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             var timeout = node["options"]?["timeoutSeconds"]?.GetValue<double>() is { } s ? (int)Math.Ceiling(s)
                 : isBefore ? (int)BeforeFunctions.DefaultTimeout.TotalSeconds : (int)options.DefaultTimeout.TotalSeconds;
             var limit = isBefore ? (int)BeforeFunctions.MaxTimeout.TotalSeconds : maxSeconds;
-            if (!Name.IsMatch(name)) problems.Add($"{name}: a function's name is its export name, letters and digits.");
+            if (install is null && !Name.IsMatch(name)) problems.Add($"{name}: a function's name is its export name, letters and digits.");
+            if (install is not null && !Name.IsMatch(name[(install.Id.Length + 1)..])) problems.Add($"{name}: a plugin's function names are letters and digits.");
+            if (install is not null && trigger.Kind == "consolePage") problems.Add($"{name}: plugins can't add console pages.");
             if (timeout < 1 || timeout > limit) problems.Add($"{name}: timeoutSeconds is 1 to {limit}{(isBefore ? " for a before-function (the write waits for it)" : "")}.");
             if (isBefore)
             {
@@ -324,6 +338,10 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
                 {
                     declared = [.. items.Select(i => i!.GetValue<string>()).Distinct()];
                     foreach (var secret in declared) if (FunctionSecrets.Problem(secret) is { } bad) problems.Add($"{name}: {bad}");
+                    // A plugin reads only its own copy's secrets, never the project's others.
+                    if (install is not null)
+                        foreach (var secret in declared.Where(s => !install.SecretNames.Values.Contains(s)))
+                            problems.Add($"{name}: {install.Package} may only read the secrets its {PluginManifest.FileName} lists ({secret} isn't one).");
                     if (declared.Count > 0 && !secrets.Available) problems.Add($"{name}: {FunctionSecrets.Unavailable}");
                     if (declared.Count == 0) declared = null;
                 }
@@ -361,7 +379,7 @@ public sealed class WincheFunctions(FunctionStore store, FunctionBundler bundler
             else problems.AddRange(FunctionLimitRules.Problems(name, limits, options.MaxMemoryMb, options.MaxConcurrency));
             list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout,
                 about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems),
-                node["options"]?["fresh"]?.GetValue<bool>() == true) { Limits = limits });
+                node["options"]?["fresh"]?.GetValue<bool>() == true) { Limits = limits, Plugin = install?.Id });
         }
         var reservedInAll = list.Sum(f => f.Limits.ReservedInstances ?? 0);
         if (reservedInAll > options.MaxConcurrency)
