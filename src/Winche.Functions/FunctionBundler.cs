@@ -74,6 +74,9 @@ public sealed class FunctionBundler(FunctionsOptions options)
             var entry = Entries.FirstOrDefault(files.ContainsKey);
             if (plugins.Count > 0)
             {
+                // Plugins import the SDKs by name: a project without code of its own (or a deno.json) gets them from npm.
+                foreach (var (name, specifier) in FunctionsSdk.Packages)
+                    if (!imports.ContainsKey(name)) imports[name] = specifier;
                 var imports2 = new List<(PluginInstall, string)>();
                 foreach (var (install, package) in plugins)
                 {

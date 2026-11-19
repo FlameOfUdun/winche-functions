@@ -24,6 +24,12 @@ public sealed class FunctionsOptions
     /// </summary>
     public Dictionary<string, string> ProvidedPlugins { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The plugin packages the console offers to install (npm names): the ones this server's admins trust. Any other
+    /// package can still be installed by a project's admins, who are warned first.
+    /// </summary>
+    public IReadOnlyList<string> PluginCatalog { get; set; } = [];
+
     /// <summary>The npm registry plugin packages come from (default https://registry.npmjs.org/).</summary>
     public string PluginRegistry { get; set; } = "https://registry.npmjs.org/";
 
