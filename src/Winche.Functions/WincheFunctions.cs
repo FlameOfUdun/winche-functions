@@ -221,6 +221,14 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
             throw new FunctionDeployException("Some resources haven't been sent.", [.. resources.Where(a => missing.Contains(a.Value.Hash)).Select(a => $"resources/{a.Key}").Take(20)]);
         if (OldApi.Problems(files) is { Count: > 0 } old)
             throw new FunctionDeployException("This code uses the functions API from before @winche-technologies/winche-admin.", old);
+        // Nothing left (a project without code of its own removing its last plugin): a version with no functions.
+        if (files.Count == 0 && plugins.Count == 0 && _current is not null)
+        {
+            var empty = await store.AddAsync(files, "", [], note, by, rolledBackFrom, resources, plugins, ct);
+            _log.LogInformation("Functions version {Version} deployed by {By}: no functions.", empty.Version, by ?? "someone");
+            await RefreshAsync(ct);
+            return empty;
+        }
         if (bundler.MissingPackages(files) is { Count: > 0 } unnamed)
             throw new FunctionDeployException("The code imports packages its deno.json doesn't name.", unnamed);
         var bundle = await bundler.BundleAsync(files, packages, ct);

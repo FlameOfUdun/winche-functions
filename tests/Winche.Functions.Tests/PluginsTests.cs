@@ -116,6 +116,19 @@ public class PluginsTests(PostgresFixture pg)
         Assert.Equal("not-found", (await functions.InvokeAsync("sms.send", null, FunctionCaller.Server)).ErrorCode);
         Assert.DoesNotContain(await secrets.ListAsync(functions.Current), s => s.Name == "SMS__AUTH_TOKEN" && s.IsSet);
 
+        // A project with only plugins removing its last one: a version with no functions.
+        var onlyPlugins = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync(), o => o.ProvidedPlugins["text-plugin"] = folder);
+        await using (onlyPlugins)
+        {
+            var f2 = onlyPlugins.Service<WincheFunctions>();
+            await f2.InstallPluginAsync(new("sms", "text-plugin", Settings: Settings(("FROM", "+441"))), "admin@x");
+            var none = await f2.UninstallPluginAsync("sms", "admin@x");
+            Assert.Empty(none.Functions);
+            Assert.Equal("not-found", (await f2.InvokeAsync("sms.send", null, FunctionCaller.Server)).ErrorCode);
+            await f2.InstallPluginAsync(new("sms", "text-plugin", Settings: Settings(("FROM", "+441"))), "admin@x");   // and back again
+            Assert.True((await f2.InvokeAsync("sms.send", JsonNode.Parse("{}"), FunctionCaller.Server)).Ok);
+        }
+
         // Rolling back brings back the plugins of that version.
         var back = await functions.RollBackAsync(own.Version, null, "admin@x");
         Assert.Equal(["alerts", "sms"], back.PluginList.Select(p => p.Id).Order());
