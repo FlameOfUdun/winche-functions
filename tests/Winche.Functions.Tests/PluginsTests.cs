@@ -177,6 +177,26 @@ public class PluginsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task A_plugins_http_functions_get_the_raw_request_at_their_id_and_name()
+    {
+        var folder = Package("hook-plugin", "1.0.0", """{ "title": "Hooks", "secrets": { "SIGNING": { "label": "Signing secret" } } }""", """
+            import { http, plugin } from "@winche-technologies/winche-functions";
+            export default plugin((p) => {
+              const signing = p.secret("SIGNING");
+              return { events: http.onRequest(async (req) => ({ ok: (await req.text()) === `signed:${signing.value()}`, path: new URL(req.url).pathname }), { methods: ["POST"], secrets: [signing] }) };
+            });
+            """);
+        await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync(), o => o.ProvidedPlugins["hook-plugin"] = folder);
+        await app.Service<WincheFunctions>().InstallPluginAsync(new("billing", "hook-plugin"), "admin@x");
+        await app.Service<FunctionSecrets>().SetAsync("BILLING__SIGNING", "s3cret", "admin@x");
+        var r = await app.Http.PostAsync($"{app.Url}/functions/v1/http/billing.events/incoming", new StringContent("signed:s3cret"));
+        var text = await r.Content.ReadAsStringAsync();
+        Assert.True(r.IsSuccessStatusCode, text);
+        Assert.Contains("\"ok\":true", text);
+        Assert.Contains("/functions/v1/http/billing.events/incoming", text);
+    }
+
+    [Fact]
     public void Manifests_are_checked()
     {
         var bad = Assert.Throws<FunctionDeployException>(() => PluginManifest.Parse("""
