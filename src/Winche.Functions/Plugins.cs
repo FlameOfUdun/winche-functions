@@ -193,6 +193,8 @@ public sealed class PluginPackages(FunctionsOptions options, PluginRegistryHttp 
     {
         if (PluginIds.PackageProblem(name) is { } bad) throw new FunctionDeployException(bad, []);
         if (version is not null && PluginIds.VersionProblem(version) is { } badVersion) throw new FunctionDeployException(badVersion, []);
+        // A server folder: this exact version's (name@version), else the one it provides by name.
+        if (version is not null && options.ProvidedPlugins.TryGetValue($"{name}@{version}", out var exactFolder)) return Provided(name, exactFolder, version);
         if (options.ProvidedPlugins.TryGetValue(name, out var folder)) return Provided(name, folder, version);
         var doc = await RegistryAsync(name, version ?? "latest", ct);
         var exact = doc["version"]?.GetValue<string>() ?? throw new FunctionDeployException($"npm has no version for {name}.", []);

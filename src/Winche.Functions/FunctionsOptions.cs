@@ -20,7 +20,8 @@ public sealed class FunctionsOptions
 
     /// <summary>
     /// Plugin packages this server provides from folders (package name → a folder with its package.json,
-    /// winche-plugin.json and built files), over npm: for servers that can't reach npm, and tests.
+    /// winche-plugin.json and built files), over npm: for servers that can't reach npm, and tests. The name is its newest
+    /// version; <c>name@version</c> keys keep older ones installable.
     /// </summary>
     public Dictionary<string, string> ProvidedPlugins { get; } = new(StringComparer.Ordinal);
 

@@ -146,6 +146,8 @@ public class PluginsTests(PostgresFixture pg)
         var v2 = Package("text-plugin", "2.0.0", Manifest.Replace("\"RETRIES\": { \"label\": \"Retries\", \"type\": \"integer\", \"default\": 3 }",
             "\"REGION\": { \"label\": \"Region\", \"type\": \"select\", \"options\": [\"eu\", \"us\"], \"required\": true }"), Code);
         app.Service<FunctionsOptions>().ProvidedPlugins["text-plugin"] = v2;
+        app.Service<FunctionsOptions>().ProvidedPlugins["text-plugin@1.0.0"] = v1;   // still there: the copy on 1.0.0 keeps changing
+        await functions.ConfigurePluginAsync("sms", Settings(("FROM", "+441"), ("RETRIES", 5)), "admin@x");
         Assert.Equal("2.0.0", (await functions.PluginsAsync()).Single().Latest);
         var needs = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.UpgradePluginAsync("sms", null, "admin@x"));
         Assert.Contains(needs.Problems, p => p.Contains("Region (REGION) is needed"));
