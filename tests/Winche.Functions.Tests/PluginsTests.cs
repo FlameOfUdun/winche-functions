@@ -77,6 +77,12 @@ public class PluginsTests(PostgresFixture pg)
         Assert.Equal(["sms.queued", "sms.send"], d.Functions.Select(f => f.Name).Order());
         Assert.All(d.Functions, f => Assert.Equal("sms", f.Plugin));
         var installed = Assert.Single(d.PluginList);
+        // An optional setting given empty stays empty (its feature off); not given, it's the default.
+        var cleared = PluginSettings.Resolve(PluginManifest.Parse(Manifest, "t"), Settings(("FROM", "+1"), ("QUEUE", "")), out var clearedProblems);
+        Assert.Empty(clearedProblems);
+        Assert.Equal("", cleared["QUEUE"]!.GetValue<string>());
+        PluginSettings.Resolve(PluginManifest.Parse(Manifest, "t"), Settings(("FROM", "")), out var needed);
+        Assert.Contains(needed, p => p.Contains("From number (FROM) is needed"));
         Assert.Equal(("1.0.0", "console", "sms", 3), (installed.Version, installed.Source, installed.Settings["QUEUE"]!.GetValue<string>(), installed.Settings["RETRIES"]!.GetValue<int>()));
 
         // A second copy, under another id, with its own settings and secret.

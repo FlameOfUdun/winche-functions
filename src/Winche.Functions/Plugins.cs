@@ -134,8 +134,15 @@ public static class PluginSettings
             problems.Add($"There's no setting {key}{(manifest.Settings.Count == 0 ? "" : $" (it has {string.Join(", ", manifest.Settings.Keys)})")}.");
         foreach (var (name, s) in manifest.Settings)
         {
-            var value = given.TryGetValue(name, out var v) && v is not null && !(v is JsonValue sv && sv.GetValueKind() == JsonValueKind.String && sv.GetValue<string>() == "")
-                ? v : s.Default;
+            // Not given: the default. Given empty (""): empty, for a setting that may be (a feature turned off), else needed.
+            var given0 = given.TryGetValue(name, out var v) ? v : null;
+            var empty = given0 is JsonValue sv && sv.GetValueKind() == JsonValueKind.String && sv.GetValue<string>() == "";
+            if (empty && !s.Required && s.Type == "string")
+            {
+                values[name] = JsonValue.Create("");
+                continue;
+            }
+            var value = given0 is not null && !empty ? given0 : s.Default;
             if (value is null)
             {
                 if (s.Required) problems.Add($"{s.Label} ({name}) is needed.");
