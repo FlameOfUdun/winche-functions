@@ -96,8 +96,7 @@ public sealed class FunctionBundler(FunctionsOptions options)
                 }
                 // The versions an admin chose (and the SDKs they're built with) are used at once; their other dependencies keep
                 // Deno's wait for new versions (a day: against compromised releases), which Deno applies by itself otherwise.
-                if (plugins.Any(p => p.Package.Folder is null))
-                    ExemptFromAge(config, [.. FunctionsSdk.NpmPackages, .. plugins.Where(p => p.Package.Folder is null).Select(p => $"npm:{p.Install.Package}")]);
+                ExemptFromAge(config, FreshPackages(plugins));
                 await File.WriteAllTextAsync(Path.Combine(dir, PluginEntry.File), PluginEntry.Source(entry, imports2), ct);
                 entry = PluginEntry.File;
             }
@@ -107,8 +106,9 @@ public sealed class FunctionBundler(FunctionsOptions options)
             foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry!, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
             // Plugins from npm: their versions and the SDKs' are looked up again, not taken from a cache made before they
             // came out (it would build a plugin against an SDK without plugin()). A few small files each time.
-            if (plugins.Any(p => p.Package.Folder is null))
-                info.ArgumentList.Insert(2, "--reload=" + string.Join(",", FunctionsSdk.NpmPackages.Concat(plugins.Where(p => p.Package.Folder is null).Select(p => $"npm:{p.Install.Package}")).Distinct()));
+            // Plugins from a folder too: they need an SDK as new as they are.
+            if (plugins.Count > 0)
+                info.ArgumentList.Insert(2, "--reload=" + string.Join(",", FreshPackages(plugins)));
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             using var process = System.Diagnostics.Process.Start(info)!;
@@ -133,6 +133,13 @@ public sealed class FunctionBundler(FunctionsOptions options)
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
     }
+
+    /// <summary>
+    /// The npm packages a build with <paramref name="plugins"/> takes at their newest, without Deno's wait or its cache:
+    /// the SDKs (any plugin, from npm or a folder, may need the newest), and the plugins from npm.
+    /// </summary>
+    internal static IReadOnlyList<string> FreshPackages(IReadOnlyList<(PluginInstall Install, PluginPackage Package)> plugins) =>
+        plugins.Count == 0 ? [] : [.. FunctionsSdk.NpmPackages.Concat(plugins.Where(p => p.Package.Folder is null).Select(p => $"npm:{p.Install.Package}")).Distinct()];
 
     /// <summary>
     /// Exempts <paramref name="packages"/> (npm:name) from Deno's wait for new npm versions: added to the config's

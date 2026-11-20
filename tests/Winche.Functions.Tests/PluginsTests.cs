@@ -356,6 +356,14 @@ public class PluginsTests(PostgresFixture pg)
         var install = new PluginInstall("sms", "@acme/texts", "1.0.0", new Dictionary<string, JsonNode?>(), PluginManifest.Parse(Manifest, "t"), "console", null, DateTimeOffset.UtcNow);
         Assert.StartsWith("import \"npm:@winche-technologies/winche-functions@^3.1.0\";", PluginEntry.Source(null, [(install, "npm:@acme/texts@1.0.0")]));
         Assert.DoesNotContain("winche-functions@", PluginEntry.Source(null, [(install, "./plugins/acme__texts/index.js")]));
+
+        // A plugin from a folder still gets the newest SDKs (it may need one out today); only npm plugins are named.
+        var manifest = PluginManifest.Parse(Manifest, "t");
+        var fromFolder = (install with { Package = "@acme/local" }, new PluginPackage("@acme/local", "1.0.0", manifest, "/plugins/local"));
+        var fromNpm = (install, new PluginPackage("@acme/texts", "1.0.0", manifest, null));
+        Assert.Equal(["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"], FunctionBundler.FreshPackages([fromFolder]));
+        Assert.Equal(["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin", "npm:@acme/texts"], FunctionBundler.FreshPackages([fromFolder, fromNpm]));
+        Assert.Empty(FunctionBundler.FreshPackages([]));
     }
 
     [Fact]
