@@ -23,6 +23,12 @@ public static class FunctionsSdk
         ("@winche-technologies/winche-admin", $"npm:@winche-technologies/winche-admin@^{Major}"),
     ];
 
+    /// <summary>
+    /// The SDK version plugins need at least (plugin() came in 3.1): the deployment's entry asks for it, so a server
+    /// whose npm cache knows only older ones looks again instead of building plugins against one without it.
+    /// </summary>
+    public const string PluginSdk = "npm:@winche-technologies/winche-functions@^3.1.0";
+
     /// <summary>The npm packages behind <see cref="Packages"/>.</summary>
     public static readonly IReadOnlyList<string> NpmPackages = ["npm:@winche-technologies/winche-functions", "npm:@winche-technologies/winche-admin"];
 

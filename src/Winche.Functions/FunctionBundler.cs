@@ -105,6 +105,10 @@ public sealed class FunctionBundler(FunctionsOptions options)
 
             var info = new ProcessStartInfo(DenoRuntime.Locate(options)) { WorkingDirectory = dir, RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
             foreach (var a in new[] { "bundle", "--quiet", "--config", "deno.json", entry!, "-o", ".winche/bundle.js" }) info.ArgumentList.Add(a);
+            // Plugins from npm: their versions and the SDKs' are looked up again, not taken from a cache made before they
+            // came out (it would build a plugin against an SDK without plugin()). A few small files each time.
+            if (plugins.Any(p => p.Package.Folder is null))
+                info.ArgumentList.Insert(2, "--reload=" + string.Join(",", FunctionsSdk.NpmPackages.Concat(plugins.Where(p => p.Package.Folder is null).Select(p => $"npm:{p.Install.Package}")).Distinct()));
             info.Environment["NO_COLOR"] = "1";
             if (options.CachePath is { } cache) info.Environment["DENO_DIR"] = cache;
             using var process = System.Diagnostics.Process.Start(info)!;

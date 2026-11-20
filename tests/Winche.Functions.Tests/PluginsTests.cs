@@ -354,8 +354,8 @@ public class PluginsTests(PostgresFixture pg)
         Assert.Equal("""{"minimumDependencyAge":{"age":"P2D","exclude":["npm:@acme/pay"]}}""", length.ToJsonString());
 
         var install = new PluginInstall("sms", "@acme/texts", "1.0.0", new Dictionary<string, JsonNode?>(), PluginManifest.Parse(Manifest, "t"), "console", null, DateTimeOffset.UtcNow);
-        Assert.StartsWith("import \"@winche-technologies/winche-functions\";", PluginEntry.Source(null, [(install, "npm:@acme/texts@1.0.0")]));
-        Assert.DoesNotContain("import \"@winche-technologies/winche-functions\"", PluginEntry.Source(null, [(install, "./plugins/acme__texts/index.js")]));
+        Assert.StartsWith("import \"npm:@winche-technologies/winche-functions@^3.1.0\";", PluginEntry.Source(null, [(install, "npm:@acme/texts@1.0.0")]));
+        Assert.DoesNotContain("winche-functions@", PluginEntry.Source(null, [(install, "./plugins/acme__texts/index.js")]));
     }
 
     [Fact]
