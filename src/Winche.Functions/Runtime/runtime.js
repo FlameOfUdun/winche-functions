@@ -62,7 +62,7 @@ const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
 const secretsOf = (s, fn) => ({
   get: (name) => {
     if (!Object.hasOwn(s, name)) throw Object.assign(new Error(fn + " doesn't list the secret " + name + ": give its handle in the function's options ({ secrets: [handle] }, the handle from secrets.define('" + name + "'))."), { code: "failed-precondition" });
-    if (s[name] == null) throw Object.assign(new Error("The secret " + name + " isn't set: set it in the console (the Secrets page) or with: winche functions secrets:set " + name), { code: "failed-precondition" });
+    if (s[name] == null) throw Object.assign(new Error("The secret " + name + " isn't set: set it in the console (the Secrets page) or with: winche secrets:set " + name), { code: "failed-precondition" });
     return s[name];
   },
   has: (name) => Object.hasOwn(s, name) && s[name] != null,

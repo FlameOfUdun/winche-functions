@@ -370,7 +370,7 @@ export const strings = callable(async (data: { lang: string }, ctx) => …, {
 ## Secrets
 
 API keys and passwords a function needs (an email service's key, another service's client secret) are **secrets**: set
-in the console (the **Secrets** page) or with `winche functions secrets:set NAME`, kept encrypted with the master key, and
+in the console (the **Secrets** page) or with `winche secrets:set NAME`, kept encrypted with the master key, and
 never shown again. Declare each once (a handle), give it to the functions that read it, and read its value while one
 runs:
 
@@ -521,7 +521,7 @@ export default plugin((p) => {
   `description`, `required` and `default`. They're checked when installing; the code reads them with
   `p.setting(name)` (or `p.settings`) when `plugin()` makes the copy, so trigger paths can come from them.
 - **Secrets:** each copy has its own, `<ID>__<NAME>` among the project's (`SMS__AUTH_TOKEN`): set like any other
-  (console, `winche functions secrets:set`), values or references. A plugin reads only the ones its manifest lists:
+  (console, `winche secrets:set`), values or references. A plugin reads only the ones its manifest lists:
   a deployment where it lists another (`secrets.define("MAIL_KEY")`) is refused.
 - **Versions:** a copy stays on its exact version. The console shows when a newer one is out, and what it changes;
   upgrading keeps the settings it still has and asks for new required ones. Every change (install, settings, upgrade,
