@@ -50,8 +50,8 @@ public class PackagesTests(PostgresFixture pg)
 
         var bad = await Assert.ThrowsAsync<FunctionDeployException>(() => functions.DeployAsync(new Dictionary<string, string>
         {
-            ["index.ts"] = """export const later = { __winche: 2, trigger: { kind: "callable" }, options: {}, handler: async () => 1 };""",
+            ["index.ts"] = """export const later = { __winche: 3, trigger: { kind: "callable" }, options: {}, handler: async () => 1 };""",
         }, null, null));
-        Assert.Contains("later: written with an @winche-technologies/winche-functions for protocol 2; this server speaks 1 (@winche-technologies/winche-functions 3.x).", bad.Problems);
+        Assert.Contains("later: written with an @winche-technologies/winche-functions for protocol 3; this server speaks 1 (@winche-technologies/winche-functions 3.x).", bad.Problems);
     }
 }

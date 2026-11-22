@@ -10,6 +10,13 @@ public static class FunctionsSdk
     /// <summary>The protocol this server speaks with the SDKs (their exported functions' <c>__winche</c>, @winche-technologies/winche-admin's calls).</summary>
     public const int Protocol = 1;
 
+    /// <summary>
+    /// What a callable that only the project's apps may call (<c>integrity: true</c>) is marked with instead of
+    /// <see cref="Protocol"/>: servers from before Integrity don't know the option, so they refuse the deployment
+    /// rather than let anyone call it. Everything else is the same as <see cref="Protocol"/>.
+    /// </summary>
+    public const int IntegrityProtocol = 2;
+
     /// <summary>The SDKs' major version for <see cref="Protocol"/>.</summary>
     public const int Major = 3;
 

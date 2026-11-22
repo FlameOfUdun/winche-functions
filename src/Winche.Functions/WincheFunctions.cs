@@ -264,7 +264,7 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
             var plugin = node["plugin"]?.GetValue<string>();
             var install = plugin is null ? null : plugins.FirstOrDefault(p => p.Id == plugin);
             if (plugin is not null && install is null) continue;   // not one the server installed
-            if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol)
+            if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol && protocol != FunctionsSdk.IntegrityProtocol)
             {
                 problems.Add($"{name}: written with an @winche-technologies/winche-functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche-technologies/winche-functions {FunctionsSdk.Major}.x).");
                 continue;

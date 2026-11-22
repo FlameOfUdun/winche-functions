@@ -580,6 +580,8 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
 
 - New: `ctx.app` and `{ integrity: true }` for callables (above), with @winche-technologies/winche-functions 3.2. Nothing
   changes for code without them; a host without `AppProof` gives every call `ctx.app` null.
+- A callable with `{ integrity: true }` is marked protocol 2 (`FunctionsSdk.IntegrityProtocol`): hosts on Winche.Functions
+  3.1 or older refuse to deploy it instead of running it open to anyone. This host takes protocols 1 and 2.
 
 ## Upgrading to 3.1
 
