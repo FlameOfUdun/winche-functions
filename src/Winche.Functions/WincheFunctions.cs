@@ -266,7 +266,7 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
             if (plugin is not null && install is null) continue;   // not one the server installed
             if ((int?)node["protocol"] is { } protocol && protocol != FunctionsSdk.Protocol && protocol != FunctionsSdk.IntegrityProtocol)
             {
-                problems.Add($"{name}: written with an @winche-technologies/winche-functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} (@winche-technologies/winche-functions {FunctionsSdk.Major}.x).");
+                problems.Add($"{name}: written with an @winche-technologies/winche-functions for protocol {protocol}; this server speaks {FunctionsSdk.Protocol} and {FunctionsSdk.IntegrityProtocol} (@winche-technologies/winche-functions {FunctionsSdk.Major}.x).");
                 continue;
             }
             var t = node["trigger"] as JsonObject ?? [];

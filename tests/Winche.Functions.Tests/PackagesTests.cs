@@ -52,6 +52,6 @@ public class PackagesTests(PostgresFixture pg)
         {
             ["index.ts"] = """export const later = { __winche: 3, trigger: { kind: "callable" }, options: {}, handler: async () => 1 };""",
         }, null, null));
-        Assert.Contains("later: written with an @winche-technologies/winche-functions for protocol 3; this server speaks 1 (@winche-technologies/winche-functions 3.x).", bad.Problems);
+        Assert.Contains("later: written with an @winche-technologies/winche-functions for protocol 3; this server speaks 1 and 2 (@winche-technologies/winche-functions 3.x).", bad.Problems);
     }
 }
