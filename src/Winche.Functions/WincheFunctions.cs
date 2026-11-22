@@ -379,6 +379,11 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
                 notWhole.Add($"{name}: {key} is a whole number.");
                 return null;
             }
+            var requireIntegrity = opts?["integrity"] is JsonValue req && req.TryGetValue<bool>(out var r) && r;
+            if (opts?["integrity"] is { } given2 && given2.GetValueKind() is not (JsonValueKind.True or JsonValueKind.False))
+                problems.Add($"{name}: integrity is true (only apps that prove themselves may call it) or false.");
+            if (requireIntegrity && trigger.Kind != "callable")
+                problems.Add($"{name}: integrity is for callables (apps call them); other functions aren't called by apps.");
             var limits = new FunctionLimits(Whole("memory"), Whole("minInstances"), Whole("maxInstances"), Whole("reservedInstances"),
                 opts?["isolate"] is JsonValue iv && iv.TryGetValue<bool>(out var isolate) ? isolate : null);
             problems.AddRange(notWhole);
@@ -387,7 +392,7 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
             else problems.AddRange(FunctionLimitRules.Problems(name, limits, options.MaxMemoryMb, options.MaxConcurrency));
             list.Add(new FunctionInfo(name, trigger, timeout, isBefore && node["options"]?["failOpen"]?.GetValue<bool>() == true, declared, minRole, page, codeTimeout,
                 about, Shape(node, name, "input", true, problems), Shape(node, name, "output", true, problems), Shape(node, name, "example", false, problems),
-                node["options"]?["fresh"]?.GetValue<bool>() == true) { Limits = limits, Plugin = install?.Id });
+                node["options"]?["fresh"]?.GetValue<bool>() == true) { Limits = limits, Plugin = install?.Id, RequireIntegrity = requireIntegrity });
         }
         var reservedInAll = list.Sum(f => f.Limits.ReservedInstances ?? 0);
         if (reservedInAll > options.MaxConcurrency)
@@ -443,6 +448,10 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
         var d = _current;
         var fn = d?.Functions.FirstOrDefault(f => f.Name == name && (kind is null || f.Trigger.Kind == kind));
         if (d is null || fn is null) return FunctionResult.Failed("not-found", $"There's no function {name}.");
+        // integrity: true: an app's call needs its proof (the project's own code calls it as ever).
+        if (fn.RequireIntegrity && caller.FromApp && caller.App is null)
+            return new FunctionResult(false, null, "permission-denied", $"{name} answers only the project's own apps: the call has no valid Integrity token.", true, 0, [])
+                { ErrorDetails = new JsonObject { ["reason"] = "integrity-required" } };
         var logs = new List<FunctionLogLine>();
         Dictionary<string, string?> secretValues;
         try { secretValues = fn.Secrets is { Count: > 0 } names ? await secrets.ForRunAsync(names, ct) : []; }
@@ -467,6 +476,8 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
         {
             ["functionName"] = name,
             ["server"] = caller.IsServer,
+            // The app that proved it's the project's own (Integrity), if one did.
+            ["app"] = caller.App is null ? null : new JsonObject { ["id"] = caller.App.Id, ["provider"] = caller.App.Provider },
             ["auth"] = caller.Uid is null ? null : new JsonObject { ["uid"] = caller.Uid, ["token"] = JsonSerializer.SerializeToNode(caller.Token ?? new Dictionary<string, object?>()) },
             ["secrets"] = new JsonObject(secretValues.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)(kv.Value is null ? null : JsonValue.Create(kv.Value))))),
         };

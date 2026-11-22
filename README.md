@@ -102,6 +102,10 @@ Deno must be installed (or `FunctionsOptions.DenoPath` set); Winche Server's ima
 - **Who called:** `ctx.caller` is the signed-in user (null when signed out); `ctx.byServer` is true only when the
   server itself called: another function (`functions.call`), a run from the console, a server with the admin SDK, a
   trigger or schedule. Never for apps or HTTP requests: a callable only the project's own code may use checks it.
+- **Which app called:** `ctx.app` is the app that proved it's the project's own (Integrity: `{ id, provider }`), or
+  null; the host supplies it (`FunctionsOptions.AppProof`; Winche Server does). A callable with `{ integrity: true }`
+  refuses apps' calls without one (`permission-denied`, details `reason: integrity-required`), whatever the project
+  enforces; the project's own code calls it as ever. Only callables take it.
 - **Callables** answer the app directly: `{ data }`, or `{ error: { code, message } }` with an HTTP status. An
   `HttpsError`'s message reaches the app; other failures show as "The function failed." (details in the logs).
 - **Run time**: a function past its time is stopped. Its time is, in order: its own in the console (**Functions →
@@ -571,6 +575,11 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
+
+## Upgrading to 3.2
+
+- New: `ctx.app` and `{ integrity: true }` for callables (above), with @winche-technologies/winche-functions 3.2. Nothing
+  changes for code without them; a host without `AppProof` gives every call `ctx.app` null.
 
 ## Upgrading to 3.1
 

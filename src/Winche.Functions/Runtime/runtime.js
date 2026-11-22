@@ -89,6 +89,7 @@ const context = (c, run) => ({
   call: callFor(run),
   functionName: c.functionName,
   auth: c.auth ?? null,
+  app: c.app ?? null,   // the app that proved it's the project's own (Integrity), if one did
   server: c.server === true,
   log: (...a) => console.log(...a),
 });

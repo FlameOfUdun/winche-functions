@@ -87,6 +87,12 @@ public sealed class FunctionsOptions
     /// </summary>
     public Func<Microsoft.AspNetCore.Http.HttpContext, IReadOnlyDictionary<string, object?>?>? Claims { get; set; }
 
+    /// <summary>
+    /// Which app proved it's the project's own for a callable's request (the host's Integrity), or null: <c>ctx.app</c>,
+    /// and what <c>integrity: true</c> callables require. Without it, no request has one.
+    /// </summary>
+    public Func<Microsoft.AspNetCore.Http.HttpContext, FunctionAppProof?>? AppProof { get; set; }
+
     /// <summary>The largest request body an HTTP function takes (default 1 MB); larger ones are refused with 413.</summary>
     public long MaxHttpRequestBytes { get; set; } = 1L << 20;
 

@@ -49,7 +49,7 @@ public static class FunctionsEndpoints
             // The request's caller (Winche.Core), or this package's own Claims mapping when it has one.
             var claims = await http.WincheCallerOf(options.Claims);
             var uid = WincheCaller.UidOf(claims);
-            var result = await functions.InvokeAsync(name, data, new FunctionCaller(uid, claims) { FromApp = true }, ct, kind: "callable");
+            var result = await functions.InvokeAsync(name, data, new FunctionCaller(uid, claims) { FromApp = true, App = options.AppProof?.Invoke(http) }, ct, kind: "callable");
             if (result.Ok) return Results.Json(new { data = result.Result });
             return Send(ErrorOf(result));
         });

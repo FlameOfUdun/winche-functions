@@ -42,6 +42,12 @@ public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int Time
     /// <summary>The plugin copy it belongs to (its id), or null for the project's own code.</summary>
     public string? Plugin { get; init; }
 
+    /// <summary>
+    /// A callable apps may call only with a valid Integrity token (options.integrity), whatever the project's
+    /// enforcement; the project's own code calls it as ever.
+    /// </summary>
+    public bool RequireIntegrity { get; init; }
+
     /// <summary>The input to start from when running it by hand: its example, else one made from its input schema.</summary>
     public JsonNode? ExampleInput => Example?.DeepClone() ?? (Input is JsonObject schema ? SchemaExample.Of(schema) : null);
 }
@@ -101,6 +107,9 @@ public sealed record FunctionLogLine(string Level, string Message, DateTimeOffse
 /// <summary>Who's calling: for callables, the caller's claims.</summary>
 public sealed record FunctionCaller(string? Uid, IReadOnlyDictionary<string, object?>? Token)
 {
+    /// <summary>The app that proved it's the project's own for this request (Integrity), if one did: <c>ctx.app</c>.</summary>
+    public FunctionAppProof? App { get; init; }
+
     /// <summary>An app's request (a callable called by an app, an HTTP function's request): never the server's own call.</summary>
     public bool FromApp { get; init; }
 
@@ -109,6 +118,9 @@ public sealed record FunctionCaller(string? Uid, IReadOnlyDictionary<string, obj
 
     public static readonly FunctionCaller Server = new(null, null);
 }
+
+/// <summary>An app's proof that it's the project's own (Integrity): its id, and how it proved itself (appAttest, …).</summary>
+public sealed record FunctionAppProof(string Id, string Provider);
 
 /// <summary>A service functions reach through ctx (db, files, users), from a package's adapter.</summary>
 public interface IFunctionBinding
