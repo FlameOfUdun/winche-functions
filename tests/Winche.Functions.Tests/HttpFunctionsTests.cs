@@ -45,7 +45,7 @@ public class HttpFunctionsTests(PostgresFixture pg)
         await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync());
         await app.Service<FunctionSecrets>().SetAsync("HOOK_SECRET", "hook-secret-1", null);
         var d = await app.Service<WincheFunctions>().DeployAsync(new Dictionary<string, string> { ["index.ts"] = Code }, "Http", "admin@x");
-        Assert.Equal("HTTP POST at /functions/v1/http/{name}", d.Functions.Single(f => f.Name == "providerEvents").Trigger.Describe());
+        Assert.Equal("HTTP POST at /functions/v1/http/providerEvents", d.Functions.Single(f => f.Name == "providerEvents").Describe());
         var db = app.Service<Winche.Database.Runtime.DocumentDatabase>();
 
         // The webhook: signed, it's recorded; unsigned, refused by the function itself; wrong method, refused before it runs.

@@ -7,7 +7,8 @@ namespace Winche.Functions;
 public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events = null, string? Path = null, string? Cron = null, string? TimeZone = null,
     string? On = null)
 {
-    public string Describe() => Kind switch
+    /// <summary>What starts it, in words; <paramref name="name"/> fills in an HTTP function's address.</summary>
+    public string Describe(string? name = null) => Kind switch
     {
         "documents" => $"documents {string.Join("/", Events ?? [])} at {Path}",
         "files" => $"files {string.Join("/", Events ?? [])} at {Path}",
@@ -16,7 +17,7 @@ public sealed record FunctionTrigger(string Kind, IReadOnlyList<string>? Events 
         "schedule" => $"schedule {Cron}{(TimeZone is null ? " (UTC)" : $" ({TimeZone})")}",
         "before" => $"before {On} {string.Join("/", Events ?? [])}{(Path is null ? "" : $" at {Path}")}",
         "consolePage" => "a console page",
-        "http" => $"HTTP {(Events is { Count: > 0 } m ? string.Join("/", m) : "any method")} at /functions/v1/http/{{name}}",
+        "http" => $"HTTP {(Events is { Count: > 0 } m ? string.Join("/", m) : "any method")} at /functions/v1/http/{name ?? "{name}"}",
         _ => "called by apps",
     };
 }
@@ -36,6 +37,9 @@ public sealed record FunctionInfo(string Name, FunctionTrigger Trigger, int Time
     string? MinRole = null, ConsolePageInfo? Page = null, int? CodeTimeoutSeconds = null,
     string? About = null, JsonNode? Input = null, JsonNode? Output = null, JsonNode? Example = null, bool Fresh = false)
 {
+    /// <summary>What starts it, in words, with its own address for an HTTP function.</summary>
+    public string Describe() => Trigger.Describe(Name);
+
     /// <summary>What its code says about its instances (memory, how many); the settings can say otherwise.</summary>
     public FunctionLimits Limits { get; init; } = new();
 
