@@ -10,6 +10,9 @@ public sealed record FunctionSecretInfo(string Name, bool IsSet, DateTimeOffset?
 {
     /// <summary>Where it's read from when it's a reference (<c>aws-sm:…</c>); null for a value kept here.</summary>
     public SecretReference? Reference { get; init; }
+
+    /// <summary>Kept in AWS by Winche (replaced there, removed there): see Winche.Secrets' SetInSourceAsync.</summary>
+    public bool Managed { get; init; }
 }
 
 /// <summary>
@@ -42,7 +45,7 @@ public sealed class FunctionSecrets(IServiceProvider services)
         return [.. names.Select(n =>
         {
             var info = saved.FirstOrDefault(s => s.Name == Prefix + n);
-            return new FunctionSecretInfo(n, info is not null, info?.SetAt, info?.SetBy, [.. declared[n].Order(StringComparer.Ordinal)]) { Reference = info?.Reference };
+            return new FunctionSecretInfo(n, info is not null, info?.SetAt, info?.SetBy, [.. declared[n].Order(StringComparer.Ordinal)]) { Reference = info?.Reference, Managed = info?.Managed ?? false };
         })];
     }
 
