@@ -95,7 +95,9 @@ public sealed class FunctionsApp : IAsyncDisposable
     public T Service<T>() where T : notnull => App.Services.GetRequiredService<T>();
     internal MemoryArchive Archive { get; init; } = new();
 
-    public static async Task<FunctionsApp> StartAsync(string db, Action<FunctionsOptions>? functions = null, string? databaseRules = null, string? storageRules = null)
+    /// <param name="realtime">Adds Winche Realtime (its background work holds connections: only the tests that use it).</param>
+    public static async Task<FunctionsApp> StartAsync(string db, Action<FunctionsOptions>? functions = null, string? databaseRules = null, string? storageRules = null,
+        bool realtime = false)
     {
         var b = WebApplication.CreateBuilder();
         b.WebHost.UseUrls("http://127.0.0.1:0");
@@ -126,6 +128,12 @@ public sealed class FunctionsApp : IAsyncDisposable
             o.ConnectionString = db;
             o.UseArchive(_ => assetArchive);
         });
+        if (realtime)
+            Winche.Realtime.ServiceCollectionExtensions.AddWincheRealtime(b.Services, o =>
+            {
+                o.ConnectionString = db;
+                o.UseRulesText("match sessions/{s} { allow get, create, update: if true; }");
+            });
         b.Services.AddWincheFunctions(o =>
         {
             o.ConnectionString = db;
@@ -143,6 +151,7 @@ public sealed class FunctionsApp : IAsyncDisposable
             ? new Dictionary<string, object?> { ["uid"] = uid, ["role"] = "clinician" } : null);
         b.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
         Winche.Functions.Assets.AssetsFunctionsExtensions.AddWincheFunctionsForAssets(b.Services);
+        Winche.Functions.Realtime.RealtimeFunctionsExtensions.AddWincheFunctionsForRealtime(b.Services);
         var app = b.Build();
         await app.InitializeWincheDatabaseAsync();
         await app.InitializeWincheStorageAsync();

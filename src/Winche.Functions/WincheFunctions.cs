@@ -294,7 +294,7 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
                 if (binding is not null && !services.GetServices<IFunctionBinding>().Any(b => b.Name == binding))
                     problems.Add($"{name}: this app doesn't run before-functions on {trigger.On} (add Winche.Functions.{trigger.On switch { "documents" => "Database", "files" => "Storage", _ => "Auth" }}).");
             }
-            var source = trigger.Kind switch { "documents" => "database", "files" => "storage", "users" => "auth", "schedule" => "schedule", "assets" => "assets", _ => null };
+            var source = trigger.Kind switch { "documents" => "database", "files" => "storage", "users" => "auth", "schedule" => "schedule", "assets" => "assets", "realtime" => "realtime", _ => null };
             if (trigger.Kind is "documents" or "files")
             {
                 if (string.IsNullOrWhiteSpace(trigger.Path)) problems.Add($"{name}: give a path, e.g. \"patients/{{patientId}}\".");
@@ -310,12 +310,18 @@ public sealed partial class WincheFunctions(FunctionStore store, FunctionBundler
                 problems.Add(source == "schedule" || catalog is null
                     ? $"{name}: triggers need Winche.Webhooks in this app (AddWincheHooks)."
                     : source == "assets" ? $"{name}: this app has no assets (add Winche.Assets: AddWincheAssets)."
+                    : source == "realtime" ? $"{name}: this app has no realtime (add Winche.Realtime: AddWincheRealtime)."
                     : $"{name}: this app has no {source} events (add Winche.Webhooks.{char.ToUpperInvariant(source[0])}{source[1..]}).");
             if (trigger.Kind == "http" && trigger.Events is { } methods && methods.Any(m => m is not ("GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD")))
                 problems.Add($"{name}: methods are GET, POST, PUT, PATCH, DELETE or HEAD.");
             if (trigger.Kind == "assets" && (trigger.Events ?? []).Any(e => e is not ("released" or "channelMoved")))
                 problems.Add($"{name}: assets events are released and channelMoved.");
-            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "http" or "assets"))
+            if (trigger.Kind == "realtime")
+            {
+                if ((trigger.Events ?? []).Any(e => e != "closed")) problems.Add($"{name}: realtime events are closed (a list closed).");
+                if (trigger.Path is { Length: > 0 } rp && !PathPattern.TryParse(rp, out _, out var rpError)) problems.Add($"{name}: {rpError}");
+            }
+            if (trigger.Kind is not ("documents" or "files" or "users" or "schedule" or "callable" or "before" or "consolePage" or "http" or "assets" or "realtime"))
                 problems.Add($"{name}: '{trigger.Kind}' isn't a trigger.");
             string? minRole = null;
             ConsolePageInfo? page = null;

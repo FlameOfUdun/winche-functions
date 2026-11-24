@@ -17,7 +17,7 @@ internal sealed class FunctionHooks(WincheFunctions functions) : IHookProvider
     /// Only functions that events start: callables, HTTP functions, console pages and actions are called, never sent
     /// events (as hooks without events of their own, they'd run on every schedule's tick).
     /// </summary>
-    internal static bool IsTriggered(FunctionInfo f) => f.Trigger.Kind is "documents" or "files" or "users" or "schedule" or "assets";
+    internal static bool IsTriggered(FunctionInfo f) => f.Trigger.Kind is "documents" or "files" or "users" or "schedule" or "assets" or "realtime";
 
     public IReadOnlyList<HookSettings> Hooks => [.. (functions.Current?.Functions ?? []).Where(IsTriggered).Select(f => new HookSettings
     {
@@ -31,7 +31,7 @@ internal sealed class FunctionHooks(WincheFunctions functions) : IHookProvider
         Do = new HookActionSettings { Kind = RunFunctionAction.ActionName, Options = new Dictionary<string, string> { ["function"] = f.Name } },
     })];
 
-    internal static string Source(string kind) => kind switch { "documents" => "database", "files" => "storage", "users" => "auth", "assets" => "assets", _ => "schedule" };
+    internal static string Source(string kind) => kind switch { "documents" => "database", "files" => "storage", "users" => "auth", "assets" => "assets", "realtime" => "realtime", _ => "schedule" };
 }
 
 /// <summary>The hook action that runs a function with the event (for functions' triggers; the console doesn't offer it for webhooks).</summary>
@@ -76,6 +76,10 @@ internal sealed class RunFunctionAction(IServiceProvider services) : IWincheActi
             {
                 ["type"] = e.Type, ["release"] = e.Data?["release"]?.DeepClone(), ["channel"] = e.Data?["channel"]?.DeepClone(),
                 ["note"] = e.Data?["note"]?.DeepClone(), ["by"] = e.Data?["by"]?.DeepClone(), ["id"] = e.Id, ["at"] = e.At.ToString("O"),
+            },
+            "realtime" => new JsonObject
+            {
+                ["type"] = e.Type, ["path"] = e.Path, ["params"] = captures, ["list"] = e.Data?.DeepClone(), ["id"] = e.Id, ["at"] = e.At.ToString("O"),
             },
             "auth" => new JsonObject
             {

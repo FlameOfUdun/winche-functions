@@ -17,6 +17,7 @@ public static class AdminOps
         "files.get", "files.read", "files.page", "files.list", "files.downloadUrl",
         "users.get",
         "assets.channels", "assets.channel", "assets.release", "assets.releases", "assets.read", "assets.downloadUrl",
+        "realtime.read", "realtime.members",
     ];
 
     /// <summary>Whether <paramref name="op"/> only reads.</summary>
