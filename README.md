@@ -65,6 +65,7 @@ call for another is refused, saying which version to use.
 | `Winche.Functions.Storage` | @winche-technologies/winche-admin's `files`: `child(path)` references — snapshots, bytes, writes (from a URL too), listings, metadata, links — as winche_storage. |
 | `Winche.Functions.Auth` | @winche-technologies/winche-admin's `auth`: `user(uid)` references — the account, custom claims (Winche Auth). |
 | `Winche.Functions.Assets` | @winche-technologies/winche-admin's `assets`: channels, releases and their files (Winche Assets), and the `onAssets.released` / `channelMoved` triggers. |
+| `Winche.Functions.Realtime` | @winche-technologies/winche-admin's `realtime`: append to, read, open and close lists, publish on channels and see who's present (Winche Realtime), and the `onRealtime.closed` trigger. |
 
 ## Install
 
@@ -74,6 +75,7 @@ dotnet add package Winche.Functions.Database   # triggers and the admin API for 
 dotnet add package Winche.Functions.Storage
 dotnet add package Winche.Functions.Auth
 dotnet add package Winche.Functions.Assets
+dotnet add package Winche.Functions.Realtime
 ```
 
 ## Setup
@@ -575,6 +577,11 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
 - **Failures:** a function that crashes or runs out of time refuses the write ("couldn't be checked"), unless it's
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
+
+## Upgrading to 3.3
+
+- New: Winche.Functions.Realtime (`realtime.*` in the admin SDK, the `onRealtime.closed` trigger),
+  `AddWincheFunctionsForRealtime()`. Realtime writes need the admin role.
 
 ## Upgrading to 3.2
 
