@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Winche.Database.Runtime;
+using Microsoft.Extensions.DependencyInjection;
+using Winche.Core;
 using Xunit;
 
 namespace Winche.Functions.Tests;
@@ -61,5 +63,29 @@ public class RealtimeTests(PostgresFixture pg)
             export const odd = { __winche: 1, trigger: { kind: "realtime", events: ["opened"] }, options: {}, run: () => null, handler: () => null };
             """ }, null, null));
         Assert.Contains(bad.Problems, p => p.Contains("realtime events are closed"));
+    }
+
+    [Fact]
+    public async Task The_binding_refuses_bad_arguments_and_a_project_that_has_not_started_realtime()
+    {
+        await using var app = await FunctionsApp.StartAsync(await pg.NewDatabaseAsync(), realtime: true);
+        var binding = app.App.Services.GetServices<IFunctionBinding>().Single(b => b.Name == "realtime");
+        async Task<string> Refused(string op, System.Text.Json.Nodes.JsonObject args, IServiceProvider? services = null) =>
+            (await Assert.ThrowsAsync<FunctionCallException>(() => binding.CallAsync(op, args, services ?? app.App.Services, default))).Code;
+        Assert.Equal("invalid-argument", await Refused("read", new() { ["path"] = "sessions/s1", ["after"] = "soon" }));
+        Assert.Equal("invalid-argument", await Refused("read", new() { ["path"] = "sessions/s1", ["limit"] = 1.5 }));
+        Assert.Equal("invalid-argument", await Refused("append", new() { ["path"] = "sessions/s1", ["items"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["key"] = "a:1" }) }));
+        Assert.Equal("invalid-argument", await Refused("append", new() { ["path"] = "sessions/s1", ["items"] = new System.Text.Json.Nodes.JsonArray(1) }));
+
+        // Where products are set up on demand and Realtime isn't: refused, and nothing made.
+        var waiting = new ServiceCollection().AddSingleton(new WincheProductReadiness()).BuildServiceProvider();
+        var notStarted = new CompositeServices(waiting, app.App.Services);
+        Assert.Equal("failed-precondition", await Refused("append", new() { ["path"] = "sessions/s1", ["items"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["key"] = "a:1", ["payload"] = "AQ==" }) }, notStarted));
+    }
+
+    /// <summary>The first provider's services, then the second's.</summary>
+    private sealed class CompositeServices(IServiceProvider first, IServiceProvider second) : IServiceProvider
+    {
+        public object? GetService(Type type) => first.GetService(type) ?? second.GetService(type);
     }
 }

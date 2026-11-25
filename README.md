@@ -578,6 +578,11 @@ export const gate = onUser.willSignIn(async (e) => { /* e.user, e.provider, e.ip
   `{ failOpen: true }`, which lets the write through and logs a warning.
 - Needs `AddWincheFunctionsForDatabase()` / `ForStorage()` / `ForAuth()` (they run them); without them a deploy says so.
 
+## Upgrading to 3.3.1
+
+- `realtime.*` is refused (failed-precondition) where products are set up on demand and Realtime isn't started; bad
+  `after`/`limit` values and items without a payload are refused as invalid arguments; `realtime.read` says `more`.
+
 ## Upgrading to 3.3
 
 - New: Winche.Functions.Realtime (`realtime.*` in the admin SDK, the `onRealtime.closed` trigger),

@@ -26,24 +26,37 @@ internal sealed class RealtimeBinding : IFunctionBinding
     public async Task<JsonNode?> CallAsync(string op, JsonObject args, IServiceProvider services, CancellationToken ct)
     {
         var lists = services.GetService<RealtimeLists>() ?? throw new FunctionCallException("unimplemented", "This app has no realtime (AddWincheRealtime).");
+        // Where products are set up on demand (Winche Server), Realtime works once the project has started it.
+        if (services.GetService<Winche.Core.WincheProductReadiness>() is { } readiness && !readiness.IsReady(RealtimeProductSetup.Name))
+            throw new FunctionCallException("failed-precondition", "Realtime isn't started in this project: start it in the console first.");
         string Arg(string name) => args[name]?.GetValueKind() == JsonValueKind.String && args[name]!.GetValue<string>() is { Length: > 0 } v ? v
             : throw new FunctionCallException("invalid-argument", $"Give {name}.");
         byte[] Bytes(JsonNode? b64)
         {
-            try { return Convert.FromBase64String(b64?.GetValueKind() == JsonValueKind.String ? b64.GetValue<string>() : ""); }
+            if (b64?.GetValueKind() != JsonValueKind.String) throw new FunctionCallException("invalid-argument", "Give a payload (base64).");
+            try { return Convert.FromBase64String(b64.GetValue<string>()); }
             catch (FormatException) { throw new FunctionCallException("invalid-argument", "A payload is base64."); }
         }
+        long Whole(string name, long otherwise) => args[name] switch
+        {
+            null => otherwise,
+            JsonValue v when v.TryGetValue<long>(out var n) => n,
+            JsonValue v when v.TryGetValue<double>(out var d) && d == Math.Floor(d) && Math.Abs(d) < 1e15 => (long)d,
+            _ => throw new FunctionCallException("invalid-argument", $"{name} is a whole number."),
+        };
         try
         {
             switch (op)
             {
                 case "append":
                     var items = (args["items"] as JsonArray ?? throw new FunctionCallException("invalid-argument", "Give items: [{ key, payload }]."))
-                        .Select(i => new RealtimeItemIn(i?["key"]?.GetValueKind() == JsonValueKind.String ? i["key"]!.GetValue<string>() : "", Bytes(i?["payload"]))).ToList();
+                        .Select(i => i is JsonObject item
+                            ? new RealtimeItemIn(item["key"]?.GetValueKind() == JsonValueKind.String ? item["key"]!.GetValue<string>() : "", Bytes(item["payload"]))
+                            : throw new FunctionCallException("invalid-argument", "Each item is { key, payload }.")).ToList();
                     var positions = await lists.ServerAppendAsync(Arg("path"), items, ct);
                     return new JsonObject { ["positions"] = new JsonArray([.. positions.Select(p => (JsonNode)p)]) };
                 case "read":
-                    var page = await lists.Store.ReadAsync(Arg("path"), args["after"]?.GetValue<long>() ?? 0, args["limit"]?.GetValue<int>() ?? 500, ct);
+                    var page = await lists.Store.ReadAsync(Arg("path"), Whole("after", 0), (int)Math.Clamp(Whole("limit", 500), 1, 1000), ct);
                     return new JsonObject
                     {
                         ["items"] = new JsonArray([.. page.Items.Select(i => (JsonNode)new JsonObject
@@ -51,6 +64,7 @@ internal sealed class RealtimeBinding : IFunctionBinding
                             ["key"] = i.Key, ["position"] = i.Position, ["at"] = i.At.ToString("O"), ["by"] = i.By, ["payload"] = Convert.ToBase64String(i.Payload),
                         })]),
                         ["list"] = page.List is { } l ? List(l) : null,
+                        ["more"] = page.More,
                     };
                 case "open":
                     return new JsonObject { ["list"] = List(await lists.ServerOpenAsync(Arg("path"), ct)) };
