@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Realtime" Version="1.0.2" />
+    <PackageReference Include="Winche.Realtime" Version="1.0.3" />
     <ProjectReference Include="..\Winche.Functions\Winche.Functions.csproj" />
   </ItemGroup>
 
